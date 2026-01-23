@@ -143,8 +143,8 @@ socket.on("call-end", ({ roomId }) => {
 
     // ICE CANDIDATE
     socket.on("webrtc-ice-candidate", ({ roomId, candidate }) => {
-      socket.to(roomId).emit("webrtc-ice-candidate", { candidate });
-    });
+  socket.broadcast.to(roomId).emit("webrtc-ice-candidate", { candidate });
+});
 
     /* ================= ADMIN ACTIONS ================= */
     socket.on("mute-user", ({ roomId, targetUserId }) => {
