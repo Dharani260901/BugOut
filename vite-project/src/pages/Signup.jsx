@@ -1,9 +1,45 @@
-import React from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { signupApi } from "../api/authApi";
 
 export default function Signup() {
+  const navigate = useNavigate();
 
-    const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  const handleSignup = async (e) => {
+    e.preventDefault();
+
+    if (!name || !email || !password) {
+    toast.error("All fields are required");
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    toast.error("Passwords do not match");
+    return;
+  }
+
+    try {
+    const data = await signupApi({ name, email, password });
+
+    // 🔐 AUTO LOGIN
+//    localStorage.setItem("accessToken", data.accessToken);
+// localStorage.setItem("refreshToken", data.refreshToken);
+// localStorage.setItem("user", JSON.stringify(data.user));
+
+
+    toast.success("Account created successfully");
+    navigate("/dashboard");
+  } catch (err) {
+    toast.error(err.message);
+  }
+
+  }
   return (
     <div className="min-h-screen flex">
 
@@ -51,12 +87,14 @@ export default function Signup() {
     </p>
 
     {/* FORM */}
-    <form className="mt-8 flex flex-col gap-5">
+    <form className="mt-8 flex flex-col gap-5" onSubmit={handleSignup}>
 
       <div>
         <label className="text-sm text-gray-600">Full Name</label>
         <input
           type="text"
+           value={name}
+          onChange={(e) => setName(e.target.value)}
           placeholder="John Doe"
           className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400 text-[15px]"
         />
@@ -66,6 +104,9 @@ export default function Signup() {
         <label className="text-sm text-gray-600">Email</label>
         <input
           type="email"
+           value={email}
+          onChange={(e) => setEmail(e.target.value)}
+
           placeholder="you@example.com"
           className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400 text-[15px]"
         />
@@ -75,6 +116,8 @@ export default function Signup() {
         <label className="text-sm text-gray-600">Password</label>
         <input
           type="password"
+           value={password}
+           onChange={(e) => setPassword(e.target.value)}
           className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400 text-[15px]"
         />
       </div>
@@ -83,6 +126,8 @@ export default function Signup() {
         <label className="text-sm text-gray-600">Confirm Password</label>
         <input
           type="password"
+          value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
           className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400 text-[15px]"
         />
       </div>
@@ -117,3 +162,4 @@ export default function Signup() {
     </div>
   );
 }
+
