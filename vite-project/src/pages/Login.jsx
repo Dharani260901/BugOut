@@ -1,32 +1,24 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
+import { loginApi } from "../api/authApi";
 
 export default function Login() {
   const navigate = useNavigate();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const handleLogin = async (e) => {
     e.preventDefault();
 
-    const res = await fetch("http://localhost:5000/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password })
-    });
-
-    const data = await res.json();
-
-    if (res.ok) {
-      localStorage.setItem("token", data.token);
-      localStorage.setItem("user", JSON.stringify(data.user));
+    try {
+      await loginApi({ email, password });
+      toast.success("Login successful");
       navigate("/dashboard");
-    } else {
-      alert(data.message);
+    } catch (err) {
+      toast.error(err.message);
     }
   };
-
 
   return (
     <div className="min-h-screen flex">

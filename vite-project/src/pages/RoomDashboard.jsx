@@ -1,79 +1,75 @@
-import React, { useState } from "react";
+import React, { useState,useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-
+import { createRoomApi, joinRoomApi, getMyRoomsApi } from "../api/roomApi";
 
 export default function RoomDashboard() {
+  const navigate = useNavigate();
+
+  
+  /* ================= USER ================= */
+  const user = JSON.parse(localStorage.getItem("user") || "{}");
+
+  /* ================= STATES ================= */
+  const [tab, setTab] = useState("create");
+
   const [roomNameInput, setRoomNameInput] = useState("");
-const [roomPasswordInput, setRoomPasswordInput] = useState("");
-const [joinCode, setJoinCode] = useState("");
-const [joinPassword, setJoinPassword] = useState("");
+  const [roomPasswordInput, setRoomPasswordInput] = useState("");
 
-const [roomCode, setRoomCode] = useState("");
-const [roomName, setRoomName] = useState("");
-const navigate = useNavigate();
+  const [joinCode, setJoinCode] = useState("");
+  const [joinPassword, setJoinPassword] = useState("");
 
-const handleLogout = () => {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
-  navigate("/login");
-};
+  const [roomCreated, setRoomCreated] = useState(false);
+  const [roomCode, setRoomCode] = useState("");
+  const [roomName, setRoomName] = useState("");
+  const [myRooms, setMyRooms] = useState([]);
 
+  /* ================= LOGOUT ================= */
+  const handleLogout = () => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
+    localStorage.removeItem("user");
+    navigate("/login");
+  };
 
-const handleCreateRoom = async () => {
-  const token = localStorage.getItem("token");
+  /* ================= CREATE ROOM ================= */
+  const handleCreateRoom = async () => {
+    try {
+      const data = await createRoomApi({
+        roomName: roomNameInput,
+        password: roomPasswordInput,
+      });
 
-  const res = await fetch("http://localhost:5000/api/rooms/create", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token
-    },
-    body: JSON.stringify({
-      roomName: roomNameInput,
-      password: roomPasswordInput
-    })
-  });
+      setRoomCode(data.roomId);
+      setRoomName(data.roomName);
+      setRoomCreated(true);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
 
-  const data = await res.json();
+  /* ================= JOIN ROOM ================= */
+  const handleJoinRoom = async () => {
+    try {
+      const data = await joinRoomApi({
+        roomCode: joinCode,
+        password: joinPassword,
+      });
 
-  if (res.ok) {
-    setRoomCode(data.roomId);
-    setRoomName(data.roomName);
-    setRoomCreated(true);
-  } else {
-    alert(data.message);
-  }
-};
-const handleJoinRoom = async () => {
-  const token = localStorage.getItem("token");
+      navigate(`/room/${data.roomId}`);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
 
-  const res = await fetch("http://localhost:5000/api/rooms/join", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: token
-    },
-    body: JSON.stringify({
-      roomCode: joinCode,
-      password: joinPassword
-    })
-  });
-
-  const data = await res.json();
-
-  if (res.ok) {
-    navigate(`/room/${data.roomId}`);
-  } else {
-    alert(data.message);
-  }
-};
-
+  useEffect(() => {
+  getMyRoomsApi().then(res => setMyRooms(res.data));
+}, []);
 
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* HEADER */}
-      <header className="flex justify-between items-center px-10 py-4 border-b">
+      {/* ================= HEADER ================= */}
+      <header className="flex justify-between items-center px-10 py-4 border-b bg-white">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-gradient-to-tr from-purple-500 to-green-400 rounded-lg" />
           <span className="font-semibold text-xl">CryptRoom</span>
@@ -85,35 +81,72 @@ const handleJoinRoom = async () => {
           </span>
 
           <div className="text-right">
-            <p className="font-semibold text-sm">vikashini</p>
-            <p className="text-gray-500 text-sm">vikashini@gmail.com</p>
+            <p className="font-semibold text-sm">{user?.name || "User"}</p>
+            <p className="text-gray-500 text-sm">{user?.email || ""}</p>
           </div>
 
-          <button className="text-xl">↪️</button>
+          <button onClick={handleLogout} className="text-xl">
+            ↪️
+          </button>
         </div>
       </header>
 
-      {/* WELCOME TEXT */}
+      {/* ================= WELCOME ================= */}
       <div className="text-center mt-10">
         <h1 className="text-3xl font-bold">
-          Welcome, <span className="text-green-600">vikashini</span>
+          Welcome,{" "}
+          <span className="text-green-600">
+            {user?.name || "User"}
+          </span>
         </h1>
         <p className="text-gray-500 mt-2">
-          Create or join a secure room to start collaborating with your team
+          Create or join a secure room to start collaborating
         </p>
+         {/* ================= MY ROOMS (SCROLL FIX APPLIED) ================= */}
+        <div className="max-w-4xl mx-auto mt-8 px-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[320px] overflow-y-auto pr-2">
+            {myRooms.map((room) => (
+              <div
+                key={room.roomCode}
+                className="bg-white border rounded-xl p-4 shadow-sm flex justify-between items-center"
+              >
+                <div>
+                  <h3 className="font-semibold">{room.roomName}</h3>
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded-full ${
+                      room.role === "admin"
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {room.role.toUpperCase()}
+                  </span>
+                </div>
+
+                <button
+                  onClick={() => navigate(`/room/${room.roomCode}`)}
+                  className="text-green-600 font-medium"
+                >
+                  Open →
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
-      {/* TABS */}
+      {/* ================= TABS ================= */}
       <div className="flex justify-center mt-6">
         <div className="bg-gray-100 rounded-full flex">
-
-           <button
+          <button
             onClick={() => {
               setTab("create");
               setRoomCreated(false);
             }}
             className={`px-6 py-2 rounded-full ${
-              tab === "create" ? "bg-white shadow font-semibold" : "text-gray-600"
+              tab === "create"
+                ? "bg-white shadow font-semibold"
+                : "text-gray-600"
             }`}
           >
             ➕ Create Room
@@ -125,7 +158,9 @@ const handleJoinRoom = async () => {
               setRoomCreated(false);
             }}
             className={`px-6 py-2 rounded-full ${
-              tab === "join" ? "bg-white shadow font-semibold" : "text-gray-600"
+              tab === "join"
+                ? "bg-white shadow font-semibold"
+                : "text-gray-600"
             }`}
           >
             👤 Join Room
@@ -133,33 +168,16 @@ const handleJoinRoom = async () => {
         </div>
       </div>
 
-      {/* MAIN CARD */}
+      {/* ================= MAIN CARD ================= */}
       <div className="flex justify-center mt-8">
         <div className="bg-white border rounded-2xl shadow-md px-10 py-8 w-[420px]">
 
-          {/* SUCCESS UI */}
+          {/* ===== ROOM CREATED SUCCESS ===== */}
           {roomCreated ? (
             <>
-              <h2 className="text-xl font-semibold flex items-center gap-2">
-                ✨ Create New Room
-              </h2>
-              <p className="text-gray-500 text-sm mt-1">
-                Set up a secure room and invite your team
-              </p>
+              <h2 className="text-xl font-semibold">✨ Room Created!</h2>
 
-              <div className="flex justify-center mt-6">
-                <div className="w-14 h-14 bg-green-50 rounded-full flex items-center justify-center">
-                  <span className="text-3xl">✔️</span>
-                </div>
-              </div>
-
-              <h3 className="text-center text-lg font-semibold mt-4">
-                Room Created!
-              </h3>
-
-              <p className="text-center text-gray-500 text-sm italic">
-                “{roomName}”
-              </p>
+              <p className="text-gray-500 mt-1 italic">“{roomName}”</p>
 
               <div className="mt-6">
                 <label className="text-sm text-gray-600">Room Code</label>
@@ -167,97 +185,86 @@ const handleJoinRoom = async () => {
                   <span className="text-green-600 font-semibold tracking-widest">
                     {roomCode}
                   </span>
-                  <button className="text-gray-500">📋</button>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(roomCode)}
+                  >
+                    📋
+                  </button>
                 </div>
               </div>
 
-              <button className="mt-6 bg-green-500 hover:bg-green-600 text-white w-full py-3 rounded-xl">
-                Enter Room →
-              </button>
-
               <button
                 onClick={() => navigate(`/room/${roomCode}`)}
-                className="mt-6 bg-green-500 text-white w-full py-3 rounded-xl"
+                className="mt-6 bg-green-500 hover:bg-green-600 text-white w-full py-3 rounded-xl"
               >
                 Enter Room →
               </button>
             </>
           ) : tab === "create" ? (
-                <>
-                  <h2 className="text-xl font-semibold flex items-center gap-2">
-                    ✨ Create New Room
-                  </h2>
-                  <p className="text-gray-500 text-sm mt-1">
-                    Set up a secure room and invite your team
-                  </p>
+            <>
+              {/* ===== CREATE ROOM ===== */}
+              <h2 className="text-xl font-semibold">✨ Create New Room</h2>
 
-                  <div className="mt-6">
-                    <label className="text-sm text-gray-600">Room Name</label>
-                     <input
-                     type="text"
-                     value={roomNameInput}
-                     onChange={(e) => setRoomNameInput(e.target.value)}
-                      placeholder="Project Discussion"
-                      className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400"
-                    />
-                  </div>
+              <div className="mt-6">
+                <label className="text-sm text-gray-600">Room Name</label>
+                <input
+                  type="text"
+                  value={roomNameInput}
+                  onChange={(e) => setRoomNameInput(e.target.value)}
+                  className="mt-1 w-full border rounded-xl px-4 py-2"
+                />
+              </div>
 
-                  <div className="mt-4">
-                    <label className="text-sm text-gray-600">Room Password</label>
-                    <input
+              <div className="mt-4">
+                <label className="text-sm text-gray-600">Room Password</label>
+                <input
                   type="password"
                   value={roomPasswordInput}
                   onChange={(e) => setRoomPasswordInput(e.target.value)}
-                      className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400"
-                    />
-                  </div>
+                  className="mt-1 w-full border rounded-xl px-4 py-2"
+                />
+              </div>
 
-                  <button
-                    onClick={handleCreateRoom}
-                    className="mt-6 bg-green-500 hover:bg-green-600 text-white w-full py-3 rounded-xl"
-                  >
-                    Create Room
-                  </button>
-                </>
-              ) : (
-                <>
-                  {/* JOIN ROOM */}
-                  <h2 className="text-xl font-semibold flex items-center gap-2">
-                    👥 Join Existing Room
-                  </h2>
-                  <p className="text-gray-500 text-sm mt-1">
-                    Enter the room code and password to join
-                  </p>
+              <button
+                onClick={handleCreateRoom}
+                className="mt-6 bg-green-500 hover:bg-green-600 text-white w-full py-3 rounded-xl"
+              >
+                Create Room
+              </button>
+            </>
+          ) : (
+            <>
+              {/* ===== JOIN ROOM ===== */}
+              <h2 className="text-xl font-semibold">👥 Join Room</h2>
 
-                  <div className="mt-6">
-                    <label className="text-sm text-gray-600">Room Code</label>
-                    <input
-                      type="text"
-                      value={joinCode}
-                      onChange={(e) => setJoinCode(e.target.value)}
-                      placeholder="ABC123"
-                      className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400"
-                    />
-                  </div>
+              <div className="mt-6">
+                <label className="text-sm text-gray-600">Room Code</label>
+                <input
+                  type="text"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  className="mt-1 w-full border rounded-xl px-4 py-2"
+                />
+              </div>
 
-                  <div className="mt-4">
-                    <label className="text-sm text-gray-600">Room Password</label>
-                    <input
-                      type="password"
-                      value={joinPassword}
-                      onChange={(e) => setJoinPassword(e.target.value)}
-                      className="mt-1 w-full border rounded-xl px-4 py-2 outline-green-400"
-                    />
-                  </div>
+              <div className="mt-4">
+                <label className="text-sm text-gray-600">Room Password</label>
+                <input
+                  type="password"
+                  value={joinPassword}
+                  onChange={(e) => setJoinPassword(e.target.value)}
+                  className="mt-1 w-full border rounded-xl px-4 py-2"
+                />
+              </div>
 
-                  <button
-                  onClick={handleJoinRoom}
-                   className="mt-6 bg-green-500 hover:bg-green-600 text-white w-full py-3 rounded-xl">
-                    Join Room
-                  </button>
-              </>
+              <button
+                onClick={handleJoinRoom}
+                className="mt-6 bg-green-500 hover:bg-green-600 text-white w-full py-3 rounded-xl"
+              >
+                Join Room
+              </button>
+            </>
           )}
-
         </div>
       </div>
     </div>
