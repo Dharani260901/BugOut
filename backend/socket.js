@@ -57,11 +57,11 @@ export default function socketServer(server) {
     // ================= CALL STATE (STEP 1) =================
 
 // User starts a call
-socket.on("call-start", ({ roomId, user }) => {
-  socket.to(roomId).emit("incoming-call", {
-    from: user,
-  });
-});
+// socket.on("call-start", ({ roomId, user }) => {
+//   socket.to(roomId).emit("incoming-call", {
+//     from: user,
+//   });
+// });
 
 // Inside io.on("connection", (socket) => { ...
 
@@ -70,9 +70,21 @@ socket.on("video-toggle", ({ roomId, enabled }) => {
 });
 
 // Ensure your webrtc-ice-candidate is broadcast correctly
-// socket.on("webrtc-ice-candidate", ({ roomId, candidate }) => {
-//   socket.to(roomId).emit("webrtc-ice-candidate", { candidate });
-// });
+// User starts a call
+socket.on("call-start", ({ roomId, user }) => {
+  // .to(roomId) sends to everyone in room EXCEPT sender
+  socket.to(roomId).emit("incoming-call", { from: user });
+});
+
+// ICE CANDIDATE - Use broadcast to avoid sending back to self
+socket.on("webrtc-ice-candidate", ({ roomId, candidate }) => {
+  socket.to(roomId).emit("webrtc-ice-candidate", { candidate });
+});
+
+// End Call - Match the name used in frontend (end-call)
+socket.on("end-call", ({ roomId }) => {
+  socket.to(roomId).emit("call-ended");
+});
 
 socket.on("speaking", ({ roomId, speaking }) => {
   socket.to(roomId).emit("remote-speaking", {
@@ -82,9 +94,9 @@ socket.on("speaking", ({ roomId, speaking }) => {
 
 
 // User ends a call
-socket.on("call-end", ({ roomId }) => {
-  socket.to(roomId).emit("call-ended");
-});
+// socket.on("end-call", ({ roomId }) => {
+//   socket.to(roomId).emit("call-ended");
+// });
 
     /* ================= CHAT ================= */
     socket.on("send-message", async (data) => {

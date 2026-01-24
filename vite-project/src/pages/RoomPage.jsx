@@ -10,125 +10,99 @@ export default function RoomPage() {
   const peerRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
-  const typingTimeoutRef = useRef(null);
-  // const remoteStreamRef = useRef(new MediaStream());
   const pendingCandidates = useRef([]);
+  const ringtoneRef = useRef(new Audio("/sounds/ringtone.mp3"));
 
-
-
-
-  // Safely parse user from localStorage
   const user = JSON.parse(
     localStorage.getItem("user") || '{"id":"anon","name":"Anonymous"}',
   );
 
-  const [rightTab, setRightTab] = useState("video");
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState("");
   const [members, setMembers] = useState([]);
-  const [files, setFiles] = useState([]);
-  const [typingUser, setTypingUser] = useState("");
   const [incomingCall, setIncomingCall] = useState(null);
   const [callActive, setCallActive] = useState(false);
   const [videoOn, setVideoOn] = useState(true);
   const [micOn, setMicOn] = useState(true);
-  const [roomName, setRoomName] = useState("");
-  const [role, setRole] = useState("");
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const [remoteStreamActive, setRemoteStreamActive] = useState(false);
   const [remoteVideoOn, setRemoteVideoOn] = useState(true);
   const [remoteMicOn, setRemoteMicOn] = useState(true);
   const [remoteSpeaking, setRemoteSpeaking] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const speakingRef = useRef(false);
 
-  // Helper to find the "Other Person" in the room dynamically
   const remoteUser = members.find((m) => m.id !== user.id);
 
-  /* ---------------- SOCKET SETUP & WebRTC SIGNALING ---------------- */
+  /* ---------------- SIGNALING & WebRTC ---------------- */
   useEffect(() => {
     socketRef.current = io("http://localhost:5000");
-
+   // Use .on('connect') to ensure we only join once the socket is ready
+  socketRef.current.on("connect", () => {
     socketRef.current.emit("join-room", {
       roomId,
       user: { id: user.id, name: user.name },
     });
+  });
 
-    socketRef.current.on("receive-message", (msg) => {
-      setMessages((prev) => [...prev, msg]);
-    });
-
-    socketRef.current.on("members-update", (list) => {
-      setMembers(list);
-    });
-
-    socketRef.current.on("incoming-call", ({ from }) => {
+    socketRef.current.on("members-update", (list) => setMembers(list));
+    socketRef.current.on("receive-message", (msg) =>
+      setMessages((prev) => [...prev, msg]),
+    );
+    // 1. ADD THIS: Specific listener for the start event
+  socketRef.current.on("incoming-call", ({ from }) => {
+    // Crucial: check ID to ensure the caller doesn't see their own pop-up
+    if (from.id !== user.id) {
       setIncomingCall(from);
-    });
-
-    socketRef.current.on("call-ended", () => {
-      setIncomingCall(null);
-      setCallActive(false);
-      cleanupCall();
-    });
+    }
+  });
 
    socketRef.current.on("webrtc-offer", async ({ offer }) => {
-  // 🔥 Always initialize once
-  await initializePeerConnection(false);
-
-  await peerRef.current.setRemoteDescription(
-    new RTCSessionDescription(offer)
-  );
-
-    // 🔥 APPLY QUEUED ICE (HERE)
-  pendingCandidates.current.forEach(async (c) => {
-    await peerRef.current.addIceCandidate(new RTCIceCandidate(c));
+    // If connection isn't ready, initialize it first
+    if (!peerRef.current) {
+      await initializePeerConnection(false);
+    }
+    
+    try {
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+      const answer = await peerRef.current.createAnswer();
+      await peerRef.current.setLocalDescription(answer);
+      socketRef.current.emit("webrtc-answer", { roomId, answer });
+    } catch (err) {
+      console.error("Error during offer handling:", err);
+    }
   });
-  pendingCandidates.current = [];
-
-  const answer = await peerRef.current.createAnswer();
-  await peerRef.current.setLocalDescription(answer);
-
-  socketRef.current.emit("webrtc-answer", { roomId, answer });
-});
-
-
-    socketRef.current.on("user-typing", (name) => {
-      setTypingUser(name);
-    });
-
-    socketRef.current.on("hide-typing", () => {
-      setTypingUser("");
-    });
-
-    socketRef.current.on("remote-speaking", ({ speaking }) => {
-      setRemoteSpeaking(speaking);
-    });
 
     socketRef.current.on("webrtc-answer", async ({ answer }) => {
-      await peerRef.current.setRemoteDescription(
-        new RTCSessionDescription(answer),
-      );
-    
+      console.log("Mahesh received Vikash's answer");
+      try {
+        if (peerRef.current) {
+          await peerRef.current.setRemoteDescription(
+            new RTCSessionDescription(answer),
+          );
 
-      // 🔥 APPLY QUEUED ICE (HERE)
-  pendingCandidates.current.forEach(async (c) => {
-    await peerRef.current.addIceCandidate(new RTCIceCandidate(c));
-  });
-  pendingCandidates.current = [];
-  });
+          // After setting the description, process any candidates that arrived early
+          if (pendingCandidates.current.length > 0) {
+            pendingCandidates.current.forEach(async (candidate) => {
+              await peerRef.current.addIceCandidate(
+                new RTCIceCandidate(candidate),
+              );
+            });
+            pendingCandidates.current = [];
+          }
+        }
+      } catch (err) {
+        console.error("Error setting remote description on Mahesh side:", err);
+      }
+    });
 
     socketRef.current.on("webrtc-ice-candidate", async ({ candidate }) => {
-  if (!peerRef.current) return;
+      if (peerRef.current?.remoteDescription) {
+        await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } else {
+        pendingCandidates.current.push(candidate);
+      }
+    });
 
-  if (peerRef.current.remoteDescription) {
-    await peerRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-  } else {
-    pendingCandidates.current.push(candidate);
-  }
-});
-
-
-    // Dynamic UI Listeners
     socketRef.current.on("remote-video-change", ({ enabled }) =>
       setRemoteVideoOn(enabled),
     );
@@ -138,699 +112,368 @@ export default function RoomPage() {
     socketRef.current.on("remote-speaking", ({ speaking }) =>
       setRemoteSpeaking(speaking),
     );
+    socketRef.current.on("call-ended", () => endCall());
 
-    return () => {
+   return () => {
+    if (socketRef.current) {
+      socketRef.current.off("incoming-call");
       socketRef.current.disconnect();
-    };
-  }, [roomId, user.id, user.name]);
-
-  /* ---------------- FETCH OLD MESSAGES ---------------- */
-  useEffect(() => {
-    fetch(`http://localhost:5000/api/messages/${roomId}`)
-      .then((res) => res.json())
-      .then((data) => setMessages(Array.isArray(data) ? data : []))
-      .catch((err) => console.error("Fetch error:", err));
-  }, [roomId]);
-
-  useEffect(() => {
-    const fetchRoomDetails = async () => {
-      try {
-        const token = localStorage.getItem("accessToken");
-
-        const res = await fetch(`http://localhost:5000/api/rooms/${roomId}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        const data = await res.json();
-
-        setRoomName(data.roomName);
-        setRole(data.role);
-      } catch (err) {
-        console.error("Failed to load room details", err);
-      }
-    };
-
-    fetchRoomDetails();
-  }, [roomId]);
-
-  /* ---------------- CHAT & TYPING ---------------- */
-  const sendMessage = () => {
-    if (!inputMessage.trim()) return;
-    socketRef.current.emit("send-message", {
-      roomId,
-      senderId: user.id,
-      senderName: user.name,
-      message: inputMessage,
-    });
-    setInputMessage("");
-    stopTyping();
+    }
   };
-
-  const handleTyping = () => {
-    socketRef.current.emit("typing", { roomId, user: user.name });
-
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      stopTyping();
-    }, 2000);
-  };
-
-  const stopTyping = () => {
-    socketRef.current.emit("stop-typing", { roomId });
-  };
-
-  /* ---------------- VIDEO CALL LOGIC ---------------- */
+}, [roomId, user.id]);
 
   const initializePeerConnection = async (isCaller = false) => {
-  try {
-    // 1. Get local media
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: true,
-    });
+    try {
+      // 1. Get the camera/mic from the hardware
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
 
-    localVideoRef.current.srcObject = stream;
-    startSpeakingDetection(stream);
+      // 2. 🔥 THE ULTIMATE FIX FOR THE BLACK "YOU" TILE:
+      // We wait 100ms to ensure React has actually rendered the <video> tag
+      setTimeout(() => {
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+          // Force the video to start playing
+          localVideoRef.current
+            .play()
+            .catch((e) => console.error("Local play failed:", e));
+          console.log("Local stream successfully attached to YOU tile");
+        } else {
+          console.error("YOU tile video element (localVideoRef) not found!");
+        }
+      }, 100);
 
-    // 2. Create peer connection
-   if (!peerRef.current) {
- peerRef.current = new RTCPeerConnection({
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" },
-    {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-  ],
-});
+      startSpeakingDetection(stream);
 
-}
+      // 3. Setup the Peer-to-Peer connection
+      if (!peerRef.current) {
+        peerRef.current = new RTCPeerConnection({
+          iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        });
 
+        // When the OTHER person's video arrives
+        peerRef.current.ontrack = (event) => {
+  const [remoteStream] = event.streams;
+  if (remoteVideoRef.current && remoteStream) {
+    remoteVideoRef.current.srcObject = remoteStream;
 
-    // 3. Add local tracks
-    const senders = peerRef.current.getSenders();
+    // 🔥 FIX: Monitor the track for "stuck" frames
+    const videoTrack = remoteStream.getVideoTracks()[0];
+    
+    videoTrack.onmute = () => {
+      console.log("Vikash's stream is muted/stuck. Attempting to re-sync...");
+      // This happens if DroidCam loses connection
+    };
 
-stream.getTracks().forEach((track) => {
-  const alreadyAdded = senders.find(
-    (s) => s.track && s.track.kind === track.kind
-  );
-  if (!alreadyAdded) {
-    peerRef.current.addTrack(track, stream);
-  }
-});
+    videoTrack.onunmute = () => {
+      console.log("Vikash's stream recovered.");
+    };
 
-
-    // 4. Prepare remote stream ONCE
-    // remoteStreamRef.current = new MediaStream();
-
-    // 5. Handle remote tracks (CRITICAL FIX)
-  peerRef.current.ontrack = (event) => {
-  if (remoteVideoRef.current) {
-    remoteVideoRef.current.srcObject = event.streams[0];
-    remoteVideoRef.current.play().catch(() => {});
+    remoteVideoRef.current.play().catch(e => console.error("Auto-play failed:", e));
     setRemoteStreamActive(true);
   }
 };
 
-
-
-
-    // 6. ICE candidates
-    peerRef.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current.emit("webrtc-ice-candidate", {
-          roomId,
-          candidate: event.candidate,
-        });
+        peerRef.current.onicecandidate = (event) => {
+          if (event.candidate) {
+            socketRef.current.emit("webrtc-ice-candidate", {
+              roomId,
+              candidate: event.candidate,
+            });
+          }
+        };
       }
-    };
 
-    // 7. Caller creates offer
-    if (isCaller) {
-      const offer = await peerRef.current.createOffer();
-      await peerRef.current.setLocalDescription(offer);
+      // 4. Send our tracks to the other person
+      stream.getTracks().forEach((track) => {
+        peerRef.current.addTrack(track, stream);
+      });
 
-      socketRef.current.emit("webrtc-offer", {
+      if (isCaller) {
+        const offer = await peerRef.current.createOffer();
+        await peerRef.current.setLocalDescription(offer);
+        socketRef.current.emit("webrtc-offer", { roomId, offer });
+      }
+
+      setCallActive(true);
+    } catch (err) {
+      console.error("Camera error:", err);
+    }
+  };
+
+  useEffect(() => {
+  if (incomingCall) {
+    ringtoneRef.current.loop = true;
+    ringtoneRef.current.play().catch(e => console.log("Audio play blocked by browser:", e));
+  } else {
+    ringtoneRef.current.pause();
+    ringtoneRef.current.currentTime = 0;
+  }
+}, [incomingCall]);
+
+  const toggleCamera = () => {
+    const track = localVideoRef.current?.srcObject?.getVideoTracks()[0];
+    if (track) {
+      track.enabled = !track.enabled;
+      setVideoOn(track.enabled);
+      socketRef.current.emit("video-toggle", {
         roomId,
-        offer,
+        enabled: track.enabled,
       });
     }
-
-    setCallActive(true);
-  } catch (err) {
-    console.error("Media / WebRTC error:", err);
-    // alert("Camera or Mic access failed");
-  }
-};
-
-
-  const startSpeakingDetection = (stream) => {
-    const audioContext = new AudioContext();
-    const analyser = audioContext.createAnalyser();
-    analyser.fftSize = 512;
-
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
-
-    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-    const checkVolume = () => {
-      analyser.getByteFrequencyData(dataArray);
-
-      const volume =
-        dataArray.reduce((sum, val) => sum + val, 0) / dataArray.length;
-
-      const speakingNow = volume > 15;
-
-      if (speakingNow !== speakingRef.current) {
-        speakingRef.current = speakingNow;
-        setIsSpeaking(speakingNow);
-
-        socketRef.current.emit("speaking", {
-          roomId,
-          speaking: speakingNow,
-        });
-      }
-
-      requestAnimationFrame(checkVolume);
-    };
-
-    checkVolume();
   };
 
-  
-
-  const startCall = async () => {
-    setCallActive(true);
-
-     await initializePeerConnection(true); // 🔥 camera + mic start here
-
-
-    // Notify others (Step 1)
-    socketRef.current.emit("call-start", {
-      roomId,
-      user: { id: user.id, name: user.name },
-    });
-
-    // Caller initializes WebRTC
-    await initializePeerConnection(true);
+  const toggleMic = () => {
+    const track = localVideoRef.current?.srcObject?.getAudioTracks()[0];
+    if (track) {
+      track.enabled = !track.enabled;
+      setMicOn(track.enabled);
+      socketRef.current.emit("mic-toggle", { roomId, enabled: track.enabled });
+    }
   };
-
-  
 
   const endCall = () => {
     setCallActive(false);
     setRemoteStreamActive(false);
-
     peerRef.current?.close();
-  peerRef.current = null;
-
-  localVideoRef.current?.srcObject
-    ?.getTracks()
-    .forEach(t => t.stop());
-
-     // 🔥 Notify the other person
-  socketRef.current.emit("call-end", { roomId });
-
-  // 🔥 Cleanup locally
-  cleanupCall();
-};
-  //   if (peerRef.current) peerRef.current.close();
-  //   if (localVideoRef.current?.srcObject) {
-  //     localVideoRef.current.srcObject.getTracks().forEach((t) => t.stop());
-  //   }
-  // };
-
-//   
-// const toggleCamera = async () => {
-//   const stream = localVideoRef.current?.srcObject;
-//   if (!stream) return;
-
-//   let videoTrack = stream.getVideoTracks()[0];
-
-//   // CASE 1: Track exists → toggle
-//   if (videoTrack) {
-//     videoTrack.enabled = !videoTrack.enabled;
-//     setVideoOn(videoTrack.enabled);
-
-//     socketRef.current.emit("video-toggle", {
-//       roomId,
-//       enabled: videoTrack.enabled,
-//     });
-//     return;
-//   }
-
-//   // CASE 2: Track was stopped → recreate
-//   const newStream = await navigator.mediaDevices.getUserMedia({ video: true });
-//   const newVideoTrack = newStream.getVideoTracks()[0];
-
-//   stream.addTrack(newVideoTrack);
-
-//   const sender = peerRef.current
-//     .getSenders()
-//     .find((s) => s.track?.kind === "video");
-
-//   if (sender) {
-//     await sender.replaceTrack(newVideoTrack);
-//   }
-
-//   setVideoOn(true);
-// };
-
-
-const toggleCamera = () => {
-  const stream = localVideoRef.current?.srcObject;
-  const videoTrack = stream?.getVideoTracks()[0];
-
-  if (videoTrack) {
-    // 1. Toggle the track state
-    const newState = !videoTrack.enabled;
-    videoTrack.enabled = newState;
-    
-    // 2. Update local UI state
-    setVideoOn(newState);
-
-    // 3. Notify the other person so their UI updates
-    socketRef.current.emit("video-toggle", {
-      roomId,
-      enabled: newState,
-    });
-  } else {
-    console.error("No video track found to toggle");
-  }
-};
-
-  // const toggleMic = () => {
-  //   const stream = localVideoRef.current.srcObject;
-  //   const audioTrack = stream?.getAudioTracks()[0];
-  //   if (audioTrack) {
-  //     audioTrack.enabled = !audioTrack.enabled;
-  //     setMicOn(audioTrack.enabled);
-  //     // Add this so the server can tell the other user
-  //     socketRef.current.emit("mic-toggle", {
-  //       roomId,
-  //       enabled: audioTrack.enabled,
-  //     });
-  //   }
-  // };
-
-const toggleMic = async () => {
-  const stream = localVideoRef.current?.srcObject;
-  if (!stream) return;
-
-  let audioTrack = stream.getAudioTracks()[0];
-
-  if (audioTrack) {
-    audioTrack.enabled = !audioTrack.enabled;
-    setMicOn(audioTrack.enabled);
-    return;
-  }
-
-  const newStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const newAudioTrack = newStream.getAudioTracks()[0];
-
-  stream.addTrack(newAudioTrack);
-
-  const sender = peerRef.current
-    .getSenders()
-    .find((s) => s.track?.kind === "audio");
-
-  if (sender) {
-    await sender.replaceTrack(newAudioTrack);
-  }
-
-  setMicOn(true);
-};
-
-
-const cleanupCall = () => {
-  console.log("🧹 Cleaning up call");
-
-  // Close peer connection
-  if (peerRef.current) {
-    peerRef.current.ontrack = null;
-    peerRef.current.onicecandidate = null;
-    peerRef.current.close();
     peerRef.current = null;
-  }
+    localVideoRef.current?.srcObject?.getTracks().forEach((t) => t.stop());
+    socketRef.current.emit("end-call", { roomId });
+  };
 
-  // Stop local media
-  if (localVideoRef.current?.srcObject) {
-    localVideoRef.current.srcObject
-      .getTracks()
-      .forEach((t) => t.stop());
-    localVideoRef.current.srcObject = null;
-  }
+  const startSpeakingDetection = (stream) => {
+    const audioContext = new (
+      window.AudioContext || window.webkitAudioContext
+    )();
+    const analyser = audioContext.createAnalyser();
+    const source = audioContext.createMediaStreamSource(stream);
+    source.connect(analyser);
+    const data = new Uint8Array(analyser.frequencyBinCount);
+    const check = () => {
+      analyser.getByteFrequencyData(data);
+      const vol = data.reduce((a, b) => a + b) / data.length;
+      const speaking = vol > 15;
+      if (speaking !== speakingRef.current) {
+        speakingRef.current = speaking;
+        setIsSpeaking(speaking);
+        socketRef.current.emit("speaking", { roomId, speaking });
+      }
+      if (callActive) requestAnimationFrame(check);
+    };
+    check();
+  };
 
-  // Clear remote media
-  if (remoteVideoRef.current) {
-    remoteVideoRef.current.srcObject = null;
+  const refreshCamera = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    localVideoRef.current.srcObject = stream;
+    
+    // Replace the track in the existing Peer Connection so Mahesh sees the update
+    const videoTrack = stream.getVideoTracks()[0];
+    const sender = peerRef.current.getSenders().find(s => s.track.kind === 'video');
+    if (sender) sender.replaceTrack(videoTrack);
+    
+    setVideoOn(true);
+  } catch (err) {
+    console.error("Failed to refresh DroidCam:", err);
   }
-
-  // Reset states
-  setCallActive(false);
-  setIncomingCall(null);
-  setRemoteStreamActive(false);
-  setVideoOn(true);
-  setMicOn(true);
-  setRemoteVideoOn(true);
-  setRemoteMicOn(true);
 };
-
-
-  /* ---------------- FILE HANDLING ---------------- */
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    const res = await fetch("http://localhost:5000/api/files/upload", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        roomId,
-        fileName: file.name,
-        fileSize: (file.size / 1024).toFixed(1) + " KB",
-        uploadedBy: user.name,
-      }),
-    });
-
-    const data = await res.json();
-    setFiles((prev) => [...prev, data]);
-  };
-
-  const deleteFile = async (id, index) => {
-    await fetch(`http://localhost:5000/api/files/${id}`, { method: "DELETE" });
-    setFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const Avatar = ({ name, speaking }) => (
-    <div
-      className={`w-24 h-24 rounded-full flex items-center justify-center text-4xl font-bold bg-green-100 text-green-700 transition-all ${
-        speaking ? "ring-4 ring-green-500 scale-105" : ""
-      }`}
-    >
-      {name?.[0]?.toUpperCase()}
-    </div>
-  );
 
   return (
-    <div className="h-screen flex flex-col font-sans bg-white">
+    <div className="h-screen flex flex-col bg-slate-900 text-white font-sans">
       {/* HEADER */}
-      <header className="flex justify-between items-center px-8 py-4 border-b">
-        <div className="flex items-center gap-3">
-          <button onClick={() => navigate(-1)} className="text-xl">
-            ⬅
-          </button>
-          <div className="w-9 h-9 bg-gradient-to-tr from-purple-500 to-green-400 rounded-xl" />
-          <div>
-            <h2 className="font-semibold text-lg">
-              {roomName || "Loading..."}
-            </h2>
-            <p className="text-sm text-gray-500">
-              {roomId} • {members.length} online
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-6">
-          <span className="text-green-600 border rounded-full px-4 py-1 text-sm bg-green-50">
-            🔐 E2E Encrypted
-          </span>
-          <button
-            className="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-lg"
-            onClick={() => navigate("/")}
-          >
-            Leave
-          </button>
-        </div>
+      <header className="flex justify-between items-center px-6 py-4 bg-slate-800 border-b border-slate-700">
+        <h2 className="text-lg font-bold text-green-400">
+          ⚡ WebRTC Room: {roomId}
+        </h2>
+        <button
+          onClick={() => navigate("/")}
+          className="bg-red-500 hover:bg-red-600 px-4 py-2 rounded-full text-sm font-bold transition"
+        >
+          Leave Room
+        </button>
       </header>
 
-      <div className="flex flex-1 overflow-hidden ">
-        {/* LEFT PANEL: MEMBERS */}
-        <div className="w-64 border-r p-4 space-y-4 overflow-y-auto bg-gray-50">
-          <h3 className="font-semibold text-gray-700">
-            👥 Members ({members.length})
+      <div className="flex flex-1 overflow-hidden">
+        {/* MAIN VIDEO AREA */}
+        <div className="flex-[3] relative bg-black flex items-center justify-center p-4">
+  {!callActive ? (
+    <div className="z-10">
+      {incomingCall ? (
+        /* THE MODAL FROM YOUR SCREENSHOT */
+        <div className="bg-slate-800 p-10 rounded-[2rem] border-2 border-green-500 shadow-2xl flex flex-col items-center min-w-[300px]">
+          <div className="w-24 h-24 bg-green-500 rounded-full mb-6 flex items-center justify-center text-4xl animate-pulse">
+            📞
+          </div>
+          <h3 className="text-2xl font-bold mb-6 text-white">
+            {incomingCall.name} is calling...
           </h3>
-          {members.map((m) => (
-            <div
-              key={m.id}
-              className="flex items-center gap-3 p-2 bg-white rounded-lg shadow-sm"
-            >
-              {/* Avatar + Online Dot */}
-              <div className="relative">
-                <div
-                  className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${
-                    m.id === user.id && isSpeaking
-                      ? "ring-2 ring-green-500 scale-105"
-                      : ""
-                  } ${
-                    m.role === "admin"
-                      ? "bg-purple-100 text-purple-700"
-                      : "bg-green-100 text-green-700"
-                  }`}
-                >
-                  {m.name[0].toUpperCase()}
-                </div>
-
-                {/* Online dot */}
-                <span
-                  className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-white ${
-                    m.status === "online" ? "bg-green-500" : "bg-gray-400"
-                  }`}
+          <button
+            onClick={() => {
+              setIncomingCall(null);
+              initializePeerConnection(false); // Acceptor role
+            }}
+            className="bg-green-500 hover:bg-green-600 px-12 py-3 rounded-full font-bold text-lg text-white transition-all transform hover:scale-105"
+          >
+            Accept Call
+          </button>
+        </div>
+      ) : (
+        /* START CALL BUTTON (Initial State) */
+        <button
+          onClick={() => {
+            socketRef.current.emit("call-start", { roomId, user });
+            initializePeerConnection(true); // Caller role
+          }}
+          className="bg-blue-600 hover:bg-blue-700 px-12 py-4 rounded-full font-bold text-xl shadow-lg transition-transform hover:scale-105"
+        >
+          Start Video Call
+        </button>
+      )}
+    </div>
+  ) : (
+            <div className="w-full h-full relative flex items-center justify-center">
+              {/* REMOTE VIDEO (THE OTHER PERSON - FULLSCREEN) */}
+              <div
+                className={`w-full h-full rounded-3xl overflow-hidden border-2 border-slate-700 bg-slate-800 flex items-center justify-center relative ${remoteSpeaking ? "ring-4 ring-green-500" : ""}`}
+              >
+                <video
+                  ref={remoteVideoRef}
+                  autoPlay
+                  playsInline
+                  className={`w-full h-full object-cover ${!remoteVideoOn || !remoteStreamActive ? "hidden" : "block"}`}
                 />
-              </div>
-              <span className="text-sm font-medium">
-                {m.name} {m.id === user.id ? "(You)" : ""}
-                {m.role === "admin" && (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 font-semibold">
-                    ADMIN
-                  </span>
+                {(!remoteVideoOn || !remoteStreamActive) && (
+                  <div className="text-center">
+                    <div className="w-32 h-32 bg-slate-700 rounded-full flex items-center justify-center text-5xl font-bold mx-auto mb-4">
+                      {remoteUser?.name[0].toUpperCase()}
+                    </div>
+                    <p className="text-xl text-slate-400">
+                      {remoteUser?.name} (Camera Off)
+                    </p>
+                  </div>
                 )}
-              </span>
+                <div className="absolute bottom-6 left-6 bg-black/50 px-4 py-2 rounded-full text-sm font-bold">
+                  {remoteUser?.name} {remoteMicOn ? "🎤" : "🔇"}
+                </div>
+              </div>
+
+              {/* LOCAL VIDEO (YOU - FLOATING TILE) */}
+              {/* LOCAL VIDEO (YOU - FLOATING TILE) */}
+              <div className="absolute top-6 right-6 w-48 h-64 bg-slate-900 rounded-2xl overflow-hidden border-2 border-white shadow-2xl flex items-center justify-center z-20">
+                <video
+                  ref={localVideoRef}
+                  autoPlay
+                  muted
+                  playsInline
+                  className={`w-full h-full object-cover ${!videoOn ? "hidden" : "block"}`}
+                />
+
+                {/* Show Initial/Avatar ONLY if camera is toggled off manually */}
+                {!videoOn && (
+                  <div className="flex items-center justify-center text-4xl font-bold bg-slate-700 w-full h-full">
+                    {user.name[0].toUpperCase()}
+                  </div>
+                )}
+
+                <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-0.5 rounded text-[10px] uppercase font-bold text-white">
+                  You
+                </div>
+              </div>
+
+              {/* FLOATING CONTROLS */}
+              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-4 z-30">
+                <button
+                  onClick={toggleMic}
+                  className={`p-4 rounded-full transition ${micOn ? "bg-slate-700" : "bg-red-500"}`}
+                >
+                  {micOn ? "🎤" : "🔇"}
+                </button>
+                <button
+                  onClick={toggleCamera}
+                  className={`p-4 rounded-full transition ${videoOn ? "bg-slate-700" : "bg-red-500"}`}
+                >
+                  {videoOn ? "📷" : "🚫"}
+                </button>
+
+                {/* 🔥 NEW REFRESH BUTTON FOR VIKASH */}
+  <button 
+    onClick={refreshCamera} 
+    className="bg-blue-500 p-4 rounded-full hover:bg-blue-600 transition"
+    title="Fix Stuck Camera"
+  >
+    🔄
+  </button>
+                <button
+                  onClick={endCall}
+                  className="bg-red-600 p-4 rounded-full hover:bg-red-700 transition px-8 font-bold"
+                >
+                  End Call
+                </button>
+              </div>
             </div>
-          ))}
+          )}
         </div>
 
-        {/* CENTER PANEL: CHAT */}
-        <div className="flex-1 flex flex-col bg-white">
-          <div className="flex-1 p-6 overflow-y-auto space-y-4">
-            {messages.map((msg, i) => (
+        {/* CHAT SIDEBAR (MINIMIZED FEEL) */}
+        <div className="flex-1 bg-[#1e293b] border-l border-slate-800 flex flex-col shadow-xl">
+  <div className="p-4 border-b border-slate-700/50 flex items-center justify-between">
+    <span className="font-bold text-slate-400 text-xs uppercase tracking-widest">Live Chat</span>
+    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+    </div>
+          <div className="flex-1 p-4 overflow-y-auto space-y-4">
+            {messages.map((m, i) => (
               <div
                 key={i}
-                className={`flex ${msg.senderId === user.id ? "justify-end" : "justify-start"}`}
+                className={`flex flex-col ${m.senderId === user.id ? "items-end" : "items-start"}`}
               >
+                <span className="text-[10px] text-slate-500 mb-1">
+                  {m.senderName}
+                </span>
                 <div
-                  className={`max-w-xs px-4 py-2 rounded-2xl ${msg.senderId === user.id ? "bg-green-500 text-white" : "bg-gray-100 text-gray-800"}`}
+                  className={`px-4 py-2 rounded-2xl text-sm max-w-[90%] ${m.senderId === user.id ? "bg-blue-600" : "bg-slate-700 text-white"}`}
                 >
-                  <p className="text-[10px] opacity-75 font-bold uppercase">
-                    {msg.senderName}
-                  </p>
-                  <p className="text-sm">{msg.message}</p>
+                  {m.message}
                 </div>
               </div>
             ))}
-            {typingUser && (
-              <p className="text-xs italic text-gray-400">
-                {typingUser} is typing...
-              </p>
-            )}
           </div>
-
-          <div className="p-4 border-t flex gap-2">
+          <div className="p-4 bg-slate-900 flex gap-2">
             <input
               value={inputMessage}
-              onChange={(e) => {
-                setInputMessage(e.target.value);
-                handleTyping();
-              }}
-              onKeyPress={(e) => e.key === "Enter" && sendMessage()}
-              className="flex-1 border rounded-full px-4 py-2 focus:outline-none focus:ring-2 focus:ring-green-400"
-              placeholder="Type message..."
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyDown={(e) =>
+                e.key === "Enter" &&
+                (socketRef.current.emit("send-message", {
+                  roomId,
+                  ...user,
+                  message: inputMessage,
+                }),
+                setInputMessage(""))
+              }
+              className="flex-1 bg-slate-800 border-none rounded-full px-4 text-sm focus:ring-2 focus:ring-blue-500"
+              placeholder="Type a message..."
             />
             <button
-              onClick={sendMessage}
-              className="bg-green-500 text-white p-2 w-12 h-12 rounded-full hover:bg-green-600 transition"
+              onClick={() => {
+                socketRef.current.emit("send-message", {
+                  roomId,
+                  ...user,
+                  message: inputMessage,
+                });
+                setInputMessage("");
+              }}
+              className="bg-blue-600 p-2 rounded-full w-10 h-10 flex items-center justify-center"
             >
               ➤
             </button>
-          </div>
-        </div>
-
-        {/* RIGHT PANEL: VIDEO & FILES */}
-        <div className="w-80 border-l flex flex-col bg-gray-50">
-          <div className="flex border-b bg-white">
-            {["video", "files"].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setRightTab(tab)}
-                className={`flex-1 py-3 text-sm capitalize ${rightTab === tab ? "border-b-2 border-green-500 font-bold text-green-600" : "text-gray-400"}`}
-              >
-                {tab === "video" ? "🎥 Video" : "📁 Files"}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex-1 p-4 overflow-y-auto">
-            {" "}
-            {rightTab === "video" ? (
-              <div className="h-full flex flex-col">
-                {" "}
-                {!callActive ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-center space-y-4">
-                    {" "}
-                    <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center text-3xl">
-                      {" "}
-                      📹{" "}
-                    </div>{" "}
-                    <h3 className="font-bold">Ready to talk?</h3>{" "}
-                    {incomingCall && (
-                      <div className="mb-4 p-3 bg-yellow-100 rounded-lg text-center">
-                        {" "}
-                        <p className="text-sm font-semibold">
-                          {" "}
-                          📞 Incoming call from {incomingCall.name}{" "}
-                        </p>{" "}
-                        <button
-                          onClick={async () => {
-                            setCallActive(true);
-                            setIncomingCall(null);
-                            await initializePeerConnection(false);
-                          }}
-                          className="mt-2 bg-green-500 text-white px-4 py-1 rounded"
-                        >
-                          {" "}
-                          Accept{" "}
-                        </button>{" "}
-                      </div>
-                    )}{" "}
-                    <button
-                      onClick={startCall}
-                      className="bg-green-500 text-white px-6 py-2 rounded-full shadow-lg hover:bg-green-600"
-                    >
-                      {" "}
-                      Start Call{" "}
-                    </button>{" "}
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-4">
-                    {/* LOCAL VIDEO (Yourself) */}
-                    <div className="relative bg-black rounded-xl overflow-hidden h-48 shadow-md flex items-center justify-center">
-  {/* Always keep the video element in the DOM, just hide it */}
-  <video
-    ref={localVideoRef}
-    autoPlay
-    muted
-    playsInline
-    className={`w-full h-full object-cover ${!videoOn ? "hidden" : "block"}`}
-  />
-  
-  {/* Show avatar only when video is off */}
-  {!videoOn && <Avatar name={user.name} speaking={isSpeaking} />}
-
-  <span className="absolute bottom-2 left-2 text-[10px] bg-black/50 text-white px-2 py-0.5 rounded">
-    You {isSpeaking && "🎤"}
-  </span>
-</div>
-
-                    {/* REMOTE VIDEO */}
-                    <div
-                      className={`relative bg-black rounded-xl overflow-hidden h-48 shadow-inner flex items-center justify-center 
-              ${remoteSpeaking ? "ring-4 ring-green-500" : "border"}`}
-                    >
-                      {remoteStreamActive && remoteVideoOn ? (
-                        <video
-                          ref={remoteVideoRef}
-                          autoPlay
-                          playsInline
-                          muted={false}
-                          onLoadedMetadata={() => {
-    remoteVideoRef.current?.play().catch(() => {});
-  }}
-                          className="w-full h-full object-cover"
-                        />
-                      ) : (
-                        <Avatar
-  name={remoteUser?.name || "User"}
-  speaking={remoteSpeaking}
-/>
-
-                      )}
-
-                      <div className="absolute bottom-2 left-2 flex items-center gap-1">
-                        <span className="text-[10px] bg-black/50 text-white px-2 py-0.5 rounded">
-  {remoteUser?.name || "User"}
-  {!remoteMicOn && " (Muted)"}
-</span>
-
-                      </div>
-                    </div>
-                    {/* CONTROLS */}
-                    <div className="flex gap-3">
-                      <button
-                        onClick={toggleCamera}
-                        className={`flex-1 py-2 rounded-xl font-semibold ${
-                          videoOn ? "bg-gray-200" : "bg-yellow-400"
-                        }`}
-                      >
-                        {videoOn ? "🎥 Camera On" : "🚫 Camera Off"}
-                      </button>
-
-                      <button
-                        onClick={toggleMic}
-                        className={`flex-1 py-2 rounded-xl font-semibold ${
-                          micOn ? "bg-gray-200" : "bg-yellow-400"
-                        }`}
-                      >
-                        {micOn ? "🎤 Mic On" : "🔇 Mic Muted"}
-                      </button>
-                    </div>
-
-                    <button
-                      onClick={endCall}
-                      className="w-full bg-red-500 text-white py-2 rounded-xl font-semibold"
-                    >
-                      End Call
-                    </button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <label className="block border-2 border-dashed border-gray-300 rounded-xl p-4 text-center cursor-pointer hover:bg-gray-100">
-                  <span className="text-sm text-gray-500">
-                    Click to upload files
-                  </span>
-                  <input type="file" hidden onChange={handleFileUpload} />
-                </label>
-
-                {files.map((file, i) => (
-                  <div
-                    key={i}
-                    className="bg-white p-3 rounded-xl shadow-sm flex justify-between items-center border"
-                  >
-                    <div className="overflow-hidden">
-                      <p className="text-sm font-semibold truncate">
-                        {file.fileName || file.name}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        {file.fileSize || file.size}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => deleteFile(file._id, i)}
-                      className="text-red-400 hover:text-red-600"
-                    >
-                      🗑
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>
     </div>
   );
 }
+
+   
