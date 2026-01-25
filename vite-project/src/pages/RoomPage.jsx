@@ -19,6 +19,7 @@ export default function RoomPage() {
     localStorage.getItem("user") || '{"id":"anon","name":"Anonymous"}',
   );
 
+  const [remoteVideoReady, setRemoteVideoReady] = useState(false);
   const [roomName, setRoomName] = useState("Room");
   const [remoteVolume, setRemoteVolume] = useState(0);
   const [messages, setMessages] = useState([]);
@@ -152,30 +153,32 @@ export default function RoomPage() {
 
         // When the OTHER person's video arrives
         peerRef.current.ontrack = (event) => {
-          const [remoteStream] = event.streams;
-          if (remoteVideoRef.current && remoteStream) {
-            remoteVideoRef.current.srcObject = remoteStream;
+  const [remoteStream] = event.streams;
+  if (!remoteStream || !remoteVideoRef.current) return;
 
-            // 🔥 FIX: Monitor the track for "stuck" frames
-            const videoTrack = remoteStream.getVideoTracks()[0];
+  const videoEl = remoteVideoRef.current;
+  videoEl.srcObject = remoteStream;
 
-            videoTrack.onmute = () => {
-              console.log(
-                "Vikash's stream is muted/stuck. Attempting to re-sync...",
-              );
-              // This happens if DroidCam loses connection
-            };
+  videoEl.onloadeddata = () => {
+    videoEl.play().catch(() => {});
+    setRemoteStreamActive(true);
 
-            videoTrack.onunmute = () => {
-              console.log("Vikash's stream recovered.");
-            };
+    // smooth fade-in trigger
+    requestAnimationFrame(() => {
+      setRemoteVideoReady(true);
+    });
+  };
 
-            remoteVideoRef.current
-              .play()
-              .catch((e) => console.error("Auto-play failed:", e));
-            setRemoteStreamActive(true);
-          }
-        };
+  // Optional diagnostics
+  const videoTrack = remoteStream.getVideoTracks()[0];
+  if (videoTrack) {
+    videoTrack.onmute = () => console.log("Remote video muted");
+    videoTrack.onunmute = () => console.log("Remote video resumed");
+  }
+};
+
+     
+        
 
         peerRef.current.onicecandidate = (event) => {
           if (event.candidate) {
@@ -246,6 +249,10 @@ export default function RoomPage() {
     setCallActive(false);
     setRemoteStreamActive(false);
     setIncomingCall(null);
+    setIsConnecting(false);
+setRemoteVideoReady(false);
+
+
 
     // 2️⃣ Stop LOCAL media tracks (camera + mic)
     if (localVideoRef.current?.srcObject) {
@@ -403,7 +410,7 @@ export default function RoomPage() {
 
     {/* ROOM NAME + META */}
     <div className="flex flex-col leading-tight">
-      <span className="text-lg font-bold text-orange-500">
+      <span className="text-lg font-bold ">
         {roomName}
       </span>
       <span className="text-sm text-gray-400">
@@ -414,7 +421,7 @@ export default function RoomPage() {
 
         <button
           onClick={() => navigate("/login")}
-          className="bg-red-500 text-white hover:bg-red-600 px-4 py-2 rounded-full text-sm font-bold transition"
+          className="bg-red-500 text-white rounded-lg hover:bg-red-600 px-4 py-2 rounded-lg text-sm font-bold transition"
         >
           Leave Room
         </button>
@@ -497,83 +504,110 @@ export default function RoomPage() {
   </div>
 )}
 
-      {/* REMOTE VIDEO */}
+     {/* ================= REMOTE VIDEO ================= */}
+<div
+  className={`w-full h-full rounded-3xl overflow-hidden border-2 border-slate-700 
+  bg-slate-800 flex items-center justify-center relative
+  ${remoteSpeaking ? "ring-4 ring-green-500" : ""}`}
+>
+
+  {/* REMOTE VIDEO ELEMENT */}
+  <video
+    ref={remoteVideoRef}
+    autoPlay
+    playsInline
+    className={`
+      w-full h-full object-cover
+      transition-all duration-700 ease-out
+      ${
+        remoteStreamActive && remoteVideoOn && remoteVideoReady
+          ? "opacity-100 scale-100"
+          : "opacity-0 scale-[1.03]"
+      }
+    `}
+  />
+
+  {/* REMOTE CAMERA OFF AVATAR (FADE OUT WHEN VIDEO READY) */}
+  {remoteUser && (
+    <div
+      className={`absolute inset-0 flex flex-col items-center justify-center
+      transition-opacity duration-500
+      ${
+        remoteVideoReady && remoteStreamActive && remoteVideoOn
+          ? "opacity-0 pointer-events-none"
+          : "opacity-100"
+      }`}
+    >
+      {(!remoteVideoOn || !remoteStreamActive) && (
+        <>
+          <div
+            className={`relative w-32 h-32 rounded-full flex items-center justify-center
+            text-5xl font-bold transition-all duration-100
+            ${getAvatarColor(remoteUser.id)}`}
+            style={{
+              transform: `scale(${1 + remoteVolume * 0.3})`,
+              boxShadow: remoteSpeaking
+                ? `0 0 ${20 + remoteVolume * 40}px rgba(34,197,94,0.9)`
+                : "none",
+            }}
+          >
+            {remoteUser.name[0].toUpperCase()}
+          </div>
+
+          <p className="mt-4 text-xl text-slate-400">
+            {remoteUser.name} 
+          </p>
+        </>
+      )}
+    </div>
+  )}
+
+  {/* REMOTE MIC STATUS */}
+  <div className="absolute bottom-6 left-6 bg-black/60 px-4 py-2 rounded-full flex items-center gap-2 text-sm font-bold z-20">
+    {remoteMicOn ? (
+      <MdMic size={18} className="text-green-400" />
+    ) : (
+      <MdMicOff size={18} className="text-red-500" />
+    )}
+  </div>
+</div>
+
+{/* ================= LOCAL VIDEO ================= */}
+<div
+  className="absolute top-6 right-6 w-48 h-64 bg-slate-900 rounded-2xl
+             overflow-hidden border-2 border-white shadow-2xl
+             flex items-center justify-center z-20"
+>
+  <video
+    ref={localVideoRef}
+    autoPlay
+    muted
+    playsInline
+    className={`
+      w-full h-full object-cover
+      transition-opacity duration-300
+      ${videoOn ? "opacity-100" : "opacity-0"}
+    `}
+  />
+
+  {/* LOCAL CAMERA OFF AVATAR */}
+  {!videoOn && (
+    <div className="absolute inset-0 flex items-center justify-center">
       <div
-        className={`w-full h-full rounded-3xl overflow-hidden border-2 border-slate-700 
-        bg-slate-800 flex items-center justify-center relative
-        ${remoteSpeaking ? "ring-4 ring-green-500" : ""}`}
+        className={`w-24 h-24 rounded-full flex items-center justify-center
+        text-4xl font-bold ${getAvatarColor(user.id)}`}
       >
-        <video
-          ref={remoteVideoRef}
-          autoPlay
-          playsInline
-          className={`w-full h-full object-cover ${
-            !remoteVideoOn || !remoteStreamActive ? "hidden" : "block"
-          }`}
-        />
-
-        {/* REMOTE CAMERA OFF AVATAR */}
-        {(!remoteVideoOn || !remoteStreamActive) && remoteUser && (
-          <div className="flex flex-col items-center justify-center">
-            <div
-              className={`relative w-32 h-32 rounded-full flex items-center justify-center
-              text-5xl font-bold transition-all duration-100
-              ${getAvatarColor(remoteUser.id)}`}
-              style={{
-                transform: `scale(${1 + remoteVolume * 0.3})`,
-                boxShadow: remoteSpeaking
-                  ? `0 0 ${20 + remoteVolume * 40}px rgba(34,197,94,0.9)`
-                  : "none",
-              }}
-            >
-              {remoteUser.name[0].toUpperCase()}
-            </div>
-            <p className="mt-4 text-xl text-slate-400">
-              {remoteUser.name} (Camera Off)
-            </p>
-          </div>
-        )}
-
-        {/* REMOTE MIC STATUS */}
-        <div className="absolute bottom-6 left-6 bg-black/60 px-4 py-2 rounded-full flex items-center gap-2 text-sm font-bold">
-          {remoteMicOn ? (
-            <MdMic size={18} className="text-green-400" />
-          ) : (
-            <MdMicOff size={18} className="text-red-500" />
-          )}
-        </div>
+        {user.name[0].toUpperCase()}
       </div>
+    </div>
+  )}
 
-      {/* LOCAL VIDEO */}
-      <div className="absolute top-6 right-6 w-48 h-64 bg-slate-900 rounded-2xl
-                      overflow-hidden border-2 border-white shadow-2xl
-                      flex items-center justify-center z-20">
-        <video
-          ref={localVideoRef}
-          autoPlay
-          muted
-          playsInline
-          className={`w-full h-full object-cover ${
-            !videoOn ? "hidden" : "block"
-          }`}
-        />
+  <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-0.5
+                  rounded text-[10px] uppercase font-bold text-white">
+    You
+  </div>
+</div>
 
-        {!videoOn && (
-          <div className="flex items-center justify-center w-full h-full">
-            <div
-              className={`w-24 h-24 rounded-full flex items-center justify-center
-              text-4xl font-bold ${getAvatarColor(user.id)}`}
-            >
-              {user.name[0].toUpperCase()}
-            </div>
-          </div>
-        )}
-
-        <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-0.5
-                        rounded text-[10px] uppercase font-bold text-white">
-          You
-        </div>
-      </div>
 
       {/* CONTROLS */}
       <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-4 z-30">
@@ -643,12 +677,25 @@ export default function RoomPage() {
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
 
-    peerRef.current.ontrack = (event) => {
-      remoteVideoRef.current.srcObject = event.streams[0];
-      setRemoteStreamActive(true);
-      setCallActive(true);
-      setIsConnecting(false);
-    };
+   peerRef.current.ontrack = (event) => {
+  const [remoteStream] = event.streams;
+  if (!remoteStream || !remoteVideoRef.current) return;
+
+  const videoEl = remoteVideoRef.current;
+  videoEl.srcObject = remoteStream;
+
+  videoEl.onloadeddata = () => {
+    videoEl.play().catch(() => {});
+    setRemoteStreamActive(true);
+    setCallActive(true);
+    setIsConnecting(false);
+
+    requestAnimationFrame(() => {
+      setRemoteVideoReady(true);
+    });
+  };
+};
+
 
     peerRef.current.onicecandidate = (e) => {
       if (e.candidate) {

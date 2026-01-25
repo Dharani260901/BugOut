@@ -11,6 +11,9 @@ import roomRoutes from "./routes/roomRoutes.js";
 import messageRoutes from "./routes/messageRoutes.js";
 import fileRoutes from "./routes/fileRoutes.js";
 
+import "./cron/roomCleanup.js";
+
+
 dotenv.config();
 connectDB();
 

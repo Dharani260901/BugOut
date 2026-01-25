@@ -104,8 +104,12 @@ export const deleteRoom = async (req, res) => {
 export const getMyRooms = async (req, res) => {
   try {
     const memberships = await RoomMember.find({
-      userId: req.userId,
-    }).populate("roomId");
+  userId: req.userId,
+}).populate({
+  path: "roomId",
+  match: { isExpired: false },
+});
+
 
     // 🔥 FULLY SAFE VERSION
     const rooms = memberships

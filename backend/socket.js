@@ -21,6 +21,11 @@ export default function socketServer(server) {
       const room = await Room.findOne({ roomCode: roomId });
       if (!room) return;
 
+
+// 🔥 UPDATE lastActiveAt
+room.lastActiveAt = new Date();
+await room.save();
+
       const member = await RoomMember.findOne({
         roomId: room._id, // ✅ ObjectId
         userId: user.id,
