@@ -99,22 +99,14 @@ socket.on("speaking", ({ roomId, speaking }) => {
 // });
 
     /* ================= CHAT ================= */
-    socket.on("send-message", async (data) => {
-      try {
-        const msg = await Message.create({
-          roomId: data.roomId,
-          senderId: data.senderId,
-          senderName: data.senderName,
-          message: data.message,
-          replyTo: data.replyTo || null,
-          readBy: [data.senderId],
-        });
-
-        io.to(data.roomId).emit("receive-message", msg);
-      } catch (err) {
-        console.error("❌ Message error:", err);
-      }
+    // ✅ PLACE IT HERE
+  socket.on("send-message", ({ roomId, id, name, message }) => {
+    io.to(roomId).emit("receive-message", {
+      senderId: id,
+      senderName: name,
+      message,
     });
+  });
 
     /* ================= TYPING ================= */
     socket.on("typing", ({ roomId, user }) => {
