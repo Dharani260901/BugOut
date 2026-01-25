@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { signupApi } from "../api/authApi";
+import { FiUserPlus,FiLock } from "react-icons/fi";
 
 export default function Signup() {
   const navigate = useNavigate();
@@ -139,15 +140,27 @@ export default function Signup() {
         <p>• Passwords match</p>
       </div>
 
-      <button className="bg-green-500 hover:bg-green-600 text-white py-3 rounded-lg shadow-md">
-        Create Account →
-      </button>
+     <button
+  className="flex items-center justify-center gap-2
+             bg-green-500 hover:bg-green-600
+             text-white py-3 rounded-lg shadow-md transition"
+>
+  Create Account
+  <FiUserPlus size={18} />
+</button>
+
     </form>
 
     <div className="mt-6 text-center">
-      <span className="text-green-600 text-sm bg-green-50 px-5 py-1 rounded-full">
-        🔐 E2E Encrypted
-      </span>
+     <span
+    className="inline-flex items-center gap-2
+               text-green-700 text-sm
+               bg-green-50 border border-green-200
+               px-4 py-1.5 rounded-full"
+  >
+    <FiLock size={14} className="text-green-600" />
+    E2E Encrypted
+  </span>
 
       <p className="mt-4 text-sm text-gray-600">
         Already have an account?

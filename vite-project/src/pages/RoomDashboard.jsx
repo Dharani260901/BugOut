@@ -1,6 +1,16 @@
 import React, { useState,useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { createRoomApi, joinRoomApi, getMyRoomsApi } from "../api/roomApi";
+import {
+  FiLogOut,
+  FiLock,
+  FiPlusCircle,
+  FiUsers,
+  FiArrowRight,
+  FiCopy,
+  FiCheckCircle
+} from "react-icons/fi";
+
 
 export default function RoomDashboard() {
   const navigate = useNavigate();
@@ -72,14 +82,18 @@ export default function RoomDashboard() {
 
       {/* ================= HEADER ================= */}
       <header className="flex justify-between items-center px-10 py-4 border-b bg-white">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-gradient-to-tr from-purple-500 to-green-400 rounded-lg" />
-          <span className="font-semibold text-xl">CryptRoom</span>
-        </div>
-
+         <div className="flex items-center gap-3">
+    {/* ICON */}
+    <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-500 to-green-400 shadow-md flex items-center justify-center">
+  <span className="text-white text-lg">🛡️</span>
+</div>
+</div>
         <div className="flex items-center gap-6">
-          <span className="text-green-600 border rounded-full px-4 py-1 text-sm bg-green-50">
-            🔐 E2E Encrypted
+          <span className="flex items-center gap-1.5
+                 text-green-600 border border-green-200
+                 rounded-full px-3 py-1
+                 text-xs bg-green-50">
+             <FiLock size={14} /> E2E Encrypted
           </span>
 
           <div className="text-right">
@@ -88,7 +102,7 @@ export default function RoomDashboard() {
           </div>
 
           <button onClick={handleLogout} className="text-xl">
-            ↪️
+             <FiLogOut size={20} />
           </button>
         </div>
       </header>
@@ -126,10 +140,11 @@ export default function RoomDashboard() {
                 </div>
 
                 <button
-                  onClick={() => navigate(`/room/${room.roomCode}`)}
-                  className="text-green-600 font-medium"
-                >
-                  Open →
+    onClick={() => navigate(`/room/${room.roomCode}`)}
+    className="flex items-center gap-1 text-green-600 font-medium
+               hover:translate-x-0.5 transition"
+  >
+                  Open <FiArrowRight />
                 </button>
               </div>
             ))}
@@ -145,13 +160,13 @@ export default function RoomDashboard() {
               setTab("create");
               setRoomCreated(false);
             }}
-            className={`px-6 py-2 rounded-full ${
-              tab === "create"
-                ? "bg-white shadow font-semibold"
-                : "text-gray-600"
-            }`}
-          >
-            ➕ Create Room
+            className={`flex items-center gap-2 px-6 py-2 rounded-full text-sm transition ${
+        tab === "create"
+          ? "bg-white shadow font-semibold text-gray-900"
+          : "text-gray-500 hover:text-gray-800"
+      }`}
+    >
+              <FiPlusCircle /> Create Room
           </button>
 
           <button
@@ -159,13 +174,13 @@ export default function RoomDashboard() {
               setTab("join");
               setRoomCreated(false);
             }}
-            className={`px-6 py-2 rounded-full ${
-              tab === "join"
-                ? "bg-white shadow font-semibold"
-                : "text-gray-600"
-            }`}
-          >
-            👤 Join Room
+            className={`flex items-center gap-2 px-6 py-2 rounded-full text-sm transition ${
+        tab === "join"
+          ? "bg-white shadow font-semibold text-gray-900"
+          : "text-gray-500 hover:text-gray-800"
+      }`}
+    >
+             <FiUsers /> Join Room
           </button>
         </div>
       </div>
@@ -177,7 +192,10 @@ export default function RoomDashboard() {
           {/* ===== ROOM CREATED SUCCESS ===== */}
           {roomCreated ? (
             <>
-              <h2 className="text-xl font-semibold">✨ Room Created!</h2>
+              <h2 className="flex items-center gap-2 text-xl font-semibold text-gray-800">
+  <FiCheckCircle className="text-green-600" size={22} />
+  Room Created!
+</h2>
 
               <p className="text-gray-500 mt-1 italic">“{roomName}”</p>
 
@@ -188,10 +206,12 @@ export default function RoomDashboard() {
                     {roomCode}
                   </span>
                   <button
-                    onClick={() => navigator.clipboard.writeText(roomCode)}
-                  >
-                    📋
-                  </button>
+  onClick={() => navigator.clipboard.writeText(roomCode)}
+  className="text-gray-500 hover:text-green-600 transition"
+  title="Copy room code"
+>
+  <FiCopy size={18} />
+</button>
                 </div>
               </div>
 
@@ -199,13 +219,14 @@ export default function RoomDashboard() {
                 onClick={() => navigate(`/room/${roomCode}`)}
                 className="mt-6 bg-green-500 hover:bg-green-600 text-white w-full py-3 rounded-xl"
               >
-                Enter Room →
+                Enter Room 
               </button>
             </>
           ) : tab === "create" ? (
             <>
               {/* ===== CREATE ROOM ===== */}
-              <h2 className="text-xl font-semibold">✨ Create New Room</h2>
+             <h2 className="flex items-center gap-2 text-xl font-semibold text-gray-800">
+  <FiCheckCircle className="text-green-600" size={22} /> Create New Room</h2>
 
               <div className="mt-6">
                 <label className="text-sm text-gray-600">Room Name</label>
@@ -237,7 +258,10 @@ export default function RoomDashboard() {
           ) : (
             <>
               {/* ===== JOIN ROOM ===== */}
-              <h2 className="text-xl font-semibold">👥 Join Room</h2>
+             <h2 className="flex items-center gap-2 text-xl font-semibold">
+  <FiUsers size={20} className="text-gray-700" />
+  Join Room
+</h2>
 
               <div className="mt-6">
                 <label className="text-sm text-gray-600">Room Code</label>
