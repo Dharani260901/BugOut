@@ -7,7 +7,7 @@ export default function Footer() {
       {/* Left Logo */}
       <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-gradient-to-tr from-purple-500 to-green-400 rounded-lg" />
-          <span className="font-semibold text-lg">CryptRoom</span>
+          <span className="font-semibold text-lg">BugOut</span>
         </div>
 
       {/* Right Copyright */}

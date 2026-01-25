@@ -53,7 +53,7 @@ export default function Signup() {
         </div>
 
         <h1 className="text-4xl font-bold mt-6 tracking-tight bg-gradient-to-tr from-purple-500 to-green-400 bg-clip-text text-transparent">
-          CryptRoom
+          BugOut
         </h1>
 
         <p className="text-gray-600 mt-3 text-center w-72 leading-relaxed">

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { MdCallEnd, MdMic, MdMicOff, MdVideocam, MdVideocamOff, MdRefresh, MdSend, MdCall  } from "react-icons/md";
 import io from "socket.io-client";
 
 export default function RoomPage() {
@@ -12,11 +13,14 @@ export default function RoomPage() {
   const remoteVideoRef = useRef(null);
   const pendingCandidates = useRef([]);
   const ringtoneRef = useRef(new Audio("/sounds/ringtone.mp3"));
+  const incomingOfferRef = useRef(null);
 
   const user = JSON.parse(
     localStorage.getItem("user") || '{"id":"anon","name":"Anonymous"}',
   );
 
+  const [roomName, setRoomName] = useState("Room");
+  const [remoteVolume, setRemoteVolume] = useState(0);
   const [messages, setMessages] = useState([]);
   const [inputMessage, setInputMessage] = useState("");
   const [members, setMembers] = useState([]);
@@ -30,47 +34,38 @@ export default function RoomPage() {
   const [remoteSpeaking, setRemoteSpeaking] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const speakingRef = useRef(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+
 
   const remoteUser = members.find((m) => m.id !== user.id);
 
   /* ---------------- SIGNALING & WebRTC ---------------- */
   useEffect(() => {
     socketRef.current = io("http://localhost:5000");
-   // Use .on('connect') to ensure we only join once the socket is ready
-  socketRef.current.on("connect", () => {
-    socketRef.current.emit("join-room", {
-      roomId,
-      user: { id: user.id, name: user.name },
+    // Use .on('connect') to ensure we only join once the socket is ready
+    socketRef.current.on("connect", () => {
+      socketRef.current.emit("join-room", {
+        roomId,
+        user: { id: user.id, name: user.name },
+      });
     });
-  });
 
     socketRef.current.on("members-update", (list) => setMembers(list));
     socketRef.current.on("receive-message", (msg) =>
       setMessages((prev) => [...prev, msg]),
     );
     // 1. ADD THIS: Specific listener for the start event
-  socketRef.current.on("incoming-call", ({ from }) => {
-    // Crucial: check ID to ensure the caller doesn't see their own pop-up
-    if (from.id !== user.id) {
-      setIncomingCall(from);
-    }
-  });
+    socketRef.current.on("incoming-call", ({ from }) => {
+      // Crucial: check ID to ensure the caller doesn't see their own pop-up
+      if (from.id !== user.id) {
+        setIncomingCall(from);
+      }
+    });
 
-   socketRef.current.on("webrtc-offer", async ({ offer }) => {
-    // If connection isn't ready, initialize it first
-    if (!peerRef.current) {
-      await initializePeerConnection(false);
-    }
-    
-    try {
-      await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await peerRef.current.createAnswer();
-      await peerRef.current.setLocalDescription(answer);
-      socketRef.current.emit("webrtc-answer", { roomId, answer });
-    } catch (err) {
-      console.error("Error during offer handling:", err);
-    }
-  });
+    socketRef.current.on("webrtc-offer", ({ offer }) => {
+      console.log("📨 Offer received, storing until user accepts");
+      incomingOfferRef.current = offer;
+    });
 
     socketRef.current.on("webrtc-answer", async ({ answer }) => {
       console.log("Mahesh received Vikash's answer");
@@ -109,18 +104,20 @@ export default function RoomPage() {
     socketRef.current.on("remote-mic-change", ({ enabled }) =>
       setRemoteMicOn(enabled),
     );
-    socketRef.current.on("remote-speaking", ({ speaking }) =>
-      setRemoteSpeaking(speaking),
-    );
+    socketRef.current.on("remote-speaking", ({ speaking, volume }) => {
+  setRemoteSpeaking(speaking);
+  setRemoteVolume(volume || 0);
+});
+
     socketRef.current.on("call-ended", () => endCall());
 
-   return () => {
-    if (socketRef.current) {
-      socketRef.current.off("incoming-call");
-      socketRef.current.disconnect();
-    }
-  };
-}, [roomId, user.id]);
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.off("incoming-call");
+        socketRef.current.disconnect();
+      }
+    };
+  }, [roomId, user.id]);
 
   const initializePeerConnection = async (isCaller = false) => {
     try {
@@ -155,26 +152,30 @@ export default function RoomPage() {
 
         // When the OTHER person's video arrives
         peerRef.current.ontrack = (event) => {
-  const [remoteStream] = event.streams;
-  if (remoteVideoRef.current && remoteStream) {
-    remoteVideoRef.current.srcObject = remoteStream;
+          const [remoteStream] = event.streams;
+          if (remoteVideoRef.current && remoteStream) {
+            remoteVideoRef.current.srcObject = remoteStream;
 
-    // 🔥 FIX: Monitor the track for "stuck" frames
-    const videoTrack = remoteStream.getVideoTracks()[0];
-    
-    videoTrack.onmute = () => {
-      console.log("Vikash's stream is muted/stuck. Attempting to re-sync...");
-      // This happens if DroidCam loses connection
-    };
+            // 🔥 FIX: Monitor the track for "stuck" frames
+            const videoTrack = remoteStream.getVideoTracks()[0];
 
-    videoTrack.onunmute = () => {
-      console.log("Vikash's stream recovered.");
-    };
+            videoTrack.onmute = () => {
+              console.log(
+                "Vikash's stream is muted/stuck. Attempting to re-sync...",
+              );
+              // This happens if DroidCam loses connection
+            };
 
-    remoteVideoRef.current.play().catch(e => console.error("Auto-play failed:", e));
-    setRemoteStreamActive(true);
-  }
-};
+            videoTrack.onunmute = () => {
+              console.log("Vikash's stream recovered.");
+            };
+
+            remoteVideoRef.current
+              .play()
+              .catch((e) => console.error("Auto-play failed:", e));
+            setRemoteStreamActive(true);
+          }
+        };
 
         peerRef.current.onicecandidate = (event) => {
           if (event.candidate) {
@@ -187,9 +188,12 @@ export default function RoomPage() {
       }
 
       // 4. Send our tracks to the other person
-      stream.getTracks().forEach((track) => {
-        peerRef.current.addTrack(track, stream);
-      });
+     if (peerRef.current.getSenders().length === 0) {
+  stream.getTracks().forEach(track => {
+    peerRef.current.addTrack(track, stream);
+  });
+}
+
 
       if (isCaller) {
         const offer = await peerRef.current.createOffer();
@@ -198,20 +202,24 @@ export default function RoomPage() {
       }
 
       setCallActive(true);
+      setIsConnecting(false);
+
     } catch (err) {
       console.error("Camera error:", err);
     }
   };
 
   useEffect(() => {
-  if (incomingCall) {
-    ringtoneRef.current.loop = true;
-    ringtoneRef.current.play().catch(e => console.log("Audio play blocked by browser:", e));
-  } else {
-    ringtoneRef.current.pause();
-    ringtoneRef.current.currentTime = 0;
-  }
-}, [incomingCall]);
+    if (incomingCall) {
+      ringtoneRef.current.loop = true;
+      ringtoneRef.current
+        .play()
+        .catch((e) => console.log("Audio play blocked by browser:", e));
+    } else {
+      ringtoneRef.current.pause();
+      ringtoneRef.current.currentTime = 0;
+    }
+  }, [incomingCall]);
 
   const toggleCamera = () => {
     const track = localVideoRef.current?.srcObject?.getVideoTracks()[0];
@@ -237,192 +245,468 @@ export default function RoomPage() {
   const endCall = () => {
     setCallActive(false);
     setRemoteStreamActive(false);
-    peerRef.current?.close();
-    peerRef.current = null;
-    localVideoRef.current?.srcObject?.getTracks().forEach((t) => t.stop());
+    setIncomingCall(null);
+
+    // 2️⃣ Stop LOCAL media tracks (camera + mic)
+    if (localVideoRef.current?.srcObject) {
+      localVideoRef.current.srcObject.getTracks().forEach((track) => {
+        track.stop();
+      });
+      localVideoRef.current.srcObject = null; // 🔥 IMPORTANT
+    }
+
+    // 3️⃣ Stop REMOTE media tracks (optional but clean)
+    if (remoteVideoRef.current?.srcObject) {
+      remoteVideoRef.current.srcObject.getTracks().forEach((track) => {
+        track.stop();
+      });
+      remoteVideoRef.current.srcObject = null;
+    }
+
+    // 4️⃣ Remove tracks & close PeerConnection
+    if (peerRef.current) {
+      peerRef.current.getSenders().forEach((sender) => {
+        try {
+          peerRef.current.removeTrack(sender);
+        } catch (e) {}
+      });
+
+      peerRef.current.close();
+      peerRef.current = null;
+    }
+
+    // 5️⃣ Notify other peer
     socketRef.current.emit("end-call", { roomId });
   };
 
   const startSpeakingDetection = (stream) => {
-    const audioContext = new (
-      window.AudioContext || window.webkitAudioContext
-    )();
-    const analyser = audioContext.createAnalyser();
-    const source = audioContext.createMediaStreamSource(stream);
-    source.connect(analyser);
-    const data = new Uint8Array(analyser.frequencyBinCount);
-    const check = () => {
-      analyser.getByteFrequencyData(data);
-      const vol = data.reduce((a, b) => a + b) / data.length;
-      const speaking = vol > 15;
-      if (speaking !== speakingRef.current) {
-        speakingRef.current = speaking;
-        setIsSpeaking(speaking);
-        socketRef.current.emit("speaking", { roomId, speaking });
-      }
-      if (callActive) requestAnimationFrame(check);
-    };
-    check();
+  const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = audioContext.createAnalyser();
+  analyser.fftSize = 256;
+
+  const source = audioContext.createMediaStreamSource(stream);
+  source.connect(analyser);
+
+  const data = new Uint8Array(analyser.frequencyBinCount);
+
+  const check = () => {
+    analyser.getByteFrequencyData(data);
+
+    // Calculate average volume (0–255)
+    const volume =
+      data.reduce((sum, v) => sum + v, 0) / data.length;
+
+    const normalizedVolume = Math.min(volume / 100, 1); // 0 → 1
+    const speaking = volume > 15;
+
+    // Emit BOTH speaking + volume
+    socketRef.current.emit("speaking", {
+      roomId,
+      speaking,
+      volume: normalizedVolume,
+    });
+
+    if (callActive) requestAnimationFrame(check);
   };
 
-  const refreshCamera = async () => {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    localVideoRef.current.srcObject = stream;
-    
-    // Replace the track in the existing Peer Connection so Mahesh sees the update
-    const videoTrack = stream.getVideoTracks()[0];
-    const sender = peerRef.current.getSenders().find(s => s.track.kind === 'video');
-    if (sender) sender.replaceTrack(videoTrack);
-    
-    setVideoOn(true);
-  } catch (err) {
-    console.error("Failed to refresh DroidCam:", err);
-  }
+  check();
 };
 
+  const refreshCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      localVideoRef.current.srcObject = stream;
+
+      // Replace the track in the existing Peer Connection so Mahesh sees the update
+      const videoTrack = stream.getVideoTracks()[0];
+      const sender = peerRef.current
+        .getSenders()
+        .find((s) => s.track.kind === "video");
+      if (sender) sender.replaceTrack(videoTrack);
+
+      setVideoOn(true);
+    } catch (err) {
+      console.error("Failed to refresh DroidCam:", err);
+    }
+  };
+
+  // ===== Members helpers (ADD ABOVE return) =====
+  const getFirstName = (name = "") => name.trim().split(" ")[0];
+
+  // 🔥 Remove duplicate members by id
+  const uniqueMembers = Array.from(
+    new Map(members.map((m) => [m.id, m])).values(),
+  );
+
+  // Sort: current user first
+  const sortedMembers = uniqueMembers.sort((a, b) => {
+    if (a.id === user.id) return -1;
+    if (b.id === user.id) return 1;
+    return 0;
+  });
+
+  useEffect(() => {
+    const fetchRoomDetails = async () => {
+      try {
+        const res = await fetch(`http://localhost:5000/api/rooms/${roomId}`, {
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("accessToken")}`,
+          },
+        });
+
+        const data = await res.json();
+        if (data.roomName) {
+          setRoomName(data.roomName);
+        }
+      } catch (err) {
+        console.error("Failed to fetch room details:", err);
+      }
+    };
+
+    fetchRoomDetails();
+  }, [roomId]);
+
+  // ===== Avatar color helper =====
+  const avatarColors = [
+    "bg-purple-100 text-purple-700",
+    "bg-green-100 text-green-700",
+    "bg-blue-100 text-blue-700",
+    "bg-pink-100 text-pink-700",
+    "bg-yellow-100 text-yellow-700",
+    "bg-indigo-100 text-indigo-700",
+    "bg-red-100 text-red-700",
+  ];
+
+  // Deterministic color based on user id
+  const getAvatarColor = (id = "") => {
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return avatarColors[Math.abs(hash) % avatarColors.length];
+  };
+
   return (
-    <div className="h-screen flex flex-col bg-slate-900 text-white font-sans">
+    <div className="h-screen flex flex-col bg-white font-sans">
       {/* HEADER */}
-      <header className="flex justify-between items-center px-6 py-4 bg-slate-800 border-b border-slate-700">
-        <h2 className="text-lg font-bold text-green-400">
-          ⚡ WebRTC Room: {roomId}
-        </h2>
+      <header className="flex justify-between items-center px-6 py-4 bg-white border-b border-gray-200">
+        {/* LEFT: ICON + ROOM INFO */}
+  <div className="flex items-center gap-3">
+    {/* ICON */}
+    <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-purple-500 to-green-400 shadow-md flex items-center justify-center">
+  <span className="text-white text-lg">🛡️</span>
+</div>
+    
+
+    {/* ROOM NAME + META */}
+    <div className="flex flex-col leading-tight">
+      <span className="text-lg font-bold text-orange-500">
+        {roomName}
+      </span>
+      <span className="text-sm text-gray-400">
+        {roomId} • {members.length} online
+      </span>
+    </div>
+  </div>
+
         <button
-          onClick={() => navigate("/")}
-          className="bg-red-500 hover:bg-red-600 px-4 py-2 rounded-full text-sm font-bold transition"
+          onClick={() => navigate("/login")}
+          className="bg-red-500 text-white hover:bg-red-600 px-4 py-2 rounded-full text-sm font-bold transition"
         >
           Leave Room
         </button>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* MAIN VIDEO AREA */}
-        <div className="flex-[3] relative bg-black flex items-center justify-center p-4">
-  {!callActive ? (
-    <div className="z-10">
-      {incomingCall ? (
-        /* THE MODAL FROM YOUR SCREENSHOT */
-        <div className="bg-slate-800 p-10 rounded-[2rem] border-2 border-green-500 shadow-2xl flex flex-col items-center min-w-[300px]">
-          <div className="w-24 h-24 bg-green-500 rounded-full mb-6 flex items-center justify-center text-4xl animate-pulse">
-            📞
+        {/* LEFT PANEL — MEMBERS */}
+        <div className="w-72 bg-white border-r border-gray-200 p-4">
+          {/* HEADER */}
+          <div className="flex items-center gap-2 mb-4 text-gray-700 font-semibold">
+            👥 Members ({members.length})
           </div>
-          <h3 className="text-2xl font-bold mb-6 text-white">
-            {incomingCall.name} is calling...
-          </h3>
-          <button
-            onClick={() => {
-              setIncomingCall(null);
-              initializePeerConnection(false); // Acceptor role
-            }}
-            className="bg-green-500 hover:bg-green-600 px-12 py-3 rounded-full font-bold text-lg text-white transition-all transform hover:scale-105"
-          >
-            Accept Call
-          </button>
-        </div>
-      ) : (
-        /* START CALL BUTTON (Initial State) */
-        <button
-          onClick={() => {
-            socketRef.current.emit("call-start", { roomId, user });
-            initializePeerConnection(true); // Caller role
-          }}
-          className="bg-blue-600 hover:bg-blue-700 px-12 py-4 rounded-full font-bold text-xl shadow-lg transition-transform hover:scale-105"
-        >
-          Start Video Call
-        </button>
-      )}
-    </div>
-  ) : (
-            <div className="w-full h-full relative flex items-center justify-center">
-              {/* REMOTE VIDEO (THE OTHER PERSON - FULLSCREEN) */}
-              <div
-                className={`w-full h-full rounded-3xl overflow-hidden border-2 border-slate-700 bg-slate-800 flex items-center justify-center relative ${remoteSpeaking ? "ring-4 ring-green-500" : ""}`}
-              >
-                <video
-                  ref={remoteVideoRef}
-                  autoPlay
-                  playsInline
-                  className={`w-full h-full object-cover ${!remoteVideoOn || !remoteStreamActive ? "hidden" : "block"}`}
-                />
-                {(!remoteVideoOn || !remoteStreamActive) && (
-                  <div className="text-center">
-                    <div className="w-32 h-32 bg-slate-700 rounded-full flex items-center justify-center text-5xl font-bold mx-auto mb-4">
-                      {remoteUser?.name[0].toUpperCase()}
+
+          {/* MEMBERS LIST */}
+          <div className="space-y-3">
+            {sortedMembers.map((m) => {
+              const firstName = getFirstName(m.name);
+              const isYou = m.id === user.id;
+
+              return (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-gray-100 transition"
+                >
+                  {/* AVATAR WITH ONLINE DOT */}
+                  <div className="relative w-10 h-10">
+                    {/* Avatar circle */}
+                    <div
+                      className={`w-10 h-10 rounded-full font-bold flex items-center justify-center ${getAvatarColor(m.id)}`}
+                    >
+                      {firstName[0]?.toUpperCase()}
                     </div>
-                    <p className="text-xl text-slate-400">
-                      {remoteUser?.name} (Camera Off)
-                    </p>
+
+                    {/* Online dot OVERLAY */}
+                    <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-white" />
                   </div>
-                )}
-                <div className="absolute bottom-6 left-6 bg-black/50 px-4 py-2 rounded-full text-sm font-bold">
-                  {remoteUser?.name} {remoteMicOn ? "🎤" : "🔇"}
-                </div>
-              </div>
 
-              {/* LOCAL VIDEO (YOU - FLOATING TILE) */}
-              {/* LOCAL VIDEO (YOU - FLOATING TILE) */}
-              <div className="absolute top-6 right-6 w-48 h-64 bg-slate-900 rounded-2xl overflow-hidden border-2 border-white shadow-2xl flex items-center justify-center z-20">
-                <video
-                  ref={localVideoRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className={`w-full h-full object-cover ${!videoOn ? "hidden" : "block"}`}
-                />
+                  {/* NAME + STATUS */}
+                  <div className="flex flex-col">
+                    <span className="flex items-center gap-2 text-sm font-medium text-gray-800">
+                      {firstName}
 
-                {/* Show Initial/Avatar ONLY if camera is toggled off manually */}
-                {!videoOn && (
-                  <div className="flex items-center justify-center text-4xl font-bold bg-slate-700 w-full h-full">
-                    {user.name[0].toUpperCase()}
+                      {isYou && (
+                        <span className="text-gray-500 font-normal">(You)</span>
+                      )}
+
+                      {m.role === "admin" ? (
+                        <span className="text-[10px] bg-purple-600 text-white px-2 py-0.5 rounded-full font-bold">
+                          ADMIN
+                        </span>
+                      ) : (
+                        <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded-full font-medium">
+                          MEMBER
+                        </span>
+                      )}
+                    </span>
                   </div>
-                )}
-
-                <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-0.5 rounded text-[10px] uppercase font-bold text-white">
-                  You
                 </div>
-              </div>
+              );
+            })}
+          </div>
+        </div>
 
-              {/* FLOATING CONTROLS */}
-              <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-4 z-30">
-                <button
-                  onClick={toggleMic}
-                  className={`p-4 rounded-full transition ${micOn ? "bg-slate-700" : "bg-red-500"}`}
-                >
-                  {micOn ? "🎤" : "🔇"}
-                </button>
-                <button
-                  onClick={toggleCamera}
-                  className={`p-4 rounded-full transition ${videoOn ? "bg-slate-700" : "bg-red-500"}`}
-                >
-                  {videoOn ? "📷" : "🚫"}
-                </button>
+        {/* MAIN VIDEO AREA */}
+<div className="flex-[4] relative bg-black flex items-center justify-center p-4">
 
-                {/* 🔥 NEW REFRESH BUTTON FOR VIKASH */}
-  <button 
-    onClick={refreshCamera} 
-    className="bg-blue-500 p-4 rounded-full hover:bg-blue-600 transition"
-    title="Fix Stuck Camera"
-  >
-    🔄
-  </button>
-                <button
-                  onClick={endCall}
-                  className="bg-red-600 p-4 rounded-full hover:bg-red-700 transition px-8 font-bold"
-                >
-                  End Call
-                </button>
-              </div>
+  {/* ================= VIDEO UI (ACTIVE OR CONNECTING) ================= */}
+  {(callActive || isConnecting) && (
+    <div className="w-full h-full relative flex items-center justify-center">
+
+      {/* CONNECTING TEXT */}
+      {isConnecting && !remoteStreamActive && (
+        <div className="absolute z-20 text-gray-400 text-sm animate-pulse">
+          Connecting…
+        </div>
+      )}
+
+      {/* REMOTE VIDEO */}
+      <div
+        className={`w-full h-full rounded-3xl overflow-hidden border-2 border-slate-700 
+        bg-slate-800 flex items-center justify-center relative
+        ${remoteSpeaking ? "ring-4 ring-green-500" : ""}`}
+      >
+        <video
+          ref={remoteVideoRef}
+          autoPlay
+          playsInline
+          className={`w-full h-full object-cover ${
+            !remoteVideoOn || !remoteStreamActive ? "hidden" : "block"
+          }`}
+        />
+
+        {/* REMOTE CAMERA OFF AVATAR */}
+        {(!remoteVideoOn || !remoteStreamActive) && remoteUser && (
+          <div className="flex flex-col items-center justify-center">
+            <div
+              className={`relative w-32 h-32 rounded-full flex items-center justify-center
+              text-5xl font-bold transition-all duration-100
+              ${getAvatarColor(remoteUser.id)}`}
+              style={{
+                transform: `scale(${1 + remoteVolume * 0.3})`,
+                boxShadow: remoteSpeaking
+                  ? `0 0 ${20 + remoteVolume * 40}px rgba(34,197,94,0.9)`
+                  : "none",
+              }}
+            >
+              {remoteUser.name[0].toUpperCase()}
             </div>
+            <p className="mt-4 text-xl text-slate-400">
+              {remoteUser.name} (Camera Off)
+            </p>
+          </div>
+        )}
+
+        {/* REMOTE MIC STATUS */}
+        <div className="absolute bottom-6 left-6 bg-black/60 px-4 py-2 rounded-full flex items-center gap-2 text-sm font-bold">
+          {remoteMicOn ? (
+            <MdMic size={18} className="text-green-400" />
+          ) : (
+            <MdMicOff size={18} className="text-red-500" />
           )}
         </div>
+      </div>
+
+      {/* LOCAL VIDEO */}
+      <div className="absolute top-6 right-6 w-48 h-64 bg-slate-900 rounded-2xl
+                      overflow-hidden border-2 border-white shadow-2xl
+                      flex items-center justify-center z-20">
+        <video
+          ref={localVideoRef}
+          autoPlay
+          muted
+          playsInline
+          className={`w-full h-full object-cover ${
+            !videoOn ? "hidden" : "block"
+          }`}
+        />
+
+        {!videoOn && (
+          <div className="flex items-center justify-center w-full h-full">
+            <div
+              className={`w-24 h-24 rounded-full flex items-center justify-center
+              text-4xl font-bold ${getAvatarColor(user.id)}`}
+            >
+              {user.name[0].toUpperCase()}
+            </div>
+          </div>
+        )}
+
+        <div className="absolute bottom-2 left-2 bg-black/60 px-2 py-0.5
+                        rounded text-[10px] uppercase font-bold text-white">
+          You
+        </div>
+      </div>
+
+      {/* CONTROLS */}
+      <div className="absolute bottom-10 left-1/2 -translate-x-1/2 flex gap-4 z-30">
+        <button
+          onClick={toggleMic}
+          className={`p-4 rounded-full ${
+            micOn ? "bg-slate-700" : "bg-red-500"
+          }`}
+        >
+          {micOn ? <MdMic size={22} /> : <MdMicOff size={22} />}
+        </button>
+
+        <button
+          onClick={toggleCamera}
+          className={`p-4 rounded-full ${
+            videoOn ? "bg-slate-700" : "bg-red-500"
+          }`}
+        >
+          {videoOn ? <MdVideocam size={22} /> : <MdVideocamOff size={22} />}
+        </button>
+
+        <button
+          onClick={refreshCamera}
+          className="bg-blue-500 p-4 rounded-full hover:bg-blue-600"
+        >
+          <MdRefresh size={22} />
+        </button>
+
+        <button
+          onClick={endCall}
+          className="bg-red-600 p-4 rounded-full hover:bg-red-700 px-8"
+        >
+          <MdCallEnd size={22} />
+        </button>
+      </div>
+    </div>
+  )}
+
+  {/* ================= INCOMING CALL UI ================= */}
+  {!callActive && !isConnecting && incomingCall && (
+    <div className="bg-slate-800 p-10 rounded-[2rem] border-2 border-green-500
+                    shadow-2xl flex flex-col items-center min-w-[320px]">
+      <div className="w-24 h-24 bg-green-500 rounded-full mb-6
+                      flex items-center justify-center animate-pulse">
+        <MdCall size={42} className="text-white" />
+      </div>
+      <h3 className="text-2xl font-bold mb-6 text-white">
+        {incomingCall.name} is calling…
+      </h3>
+      <button
+        onClick={async () => {
+  setIsConnecting(true);
+  setIncomingCall(null);
+
+  // 1️⃣ Get media & create peer
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: true,
+    audio: true,
+  });
+
+  // Attach local video
+  localVideoRef.current.srcObject = stream;
+  localVideoRef.current.play();
+
+  if (!peerRef.current) {
+    peerRef.current = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+    });
+
+    peerRef.current.ontrack = (event) => {
+      remoteVideoRef.current.srcObject = event.streams[0];
+      setRemoteStreamActive(true);
+      setCallActive(true);
+      setIsConnecting(false);
+    };
+
+    peerRef.current.onicecandidate = (e) => {
+      if (e.candidate) {
+        socketRef.current.emit("webrtc-ice-candidate", {
+          roomId,
+          candidate: e.candidate,
+        });
+      }
+    };
+  }
+
+  // 2️⃣ IMPORTANT: set remote description FIRST
+  await peerRef.current.setRemoteDescription(
+    new RTCSessionDescription(incomingOfferRef.current)
+  );
+
+  // 3️⃣ THEN add tracks
+  stream.getTracks().forEach(track => {
+    peerRef.current.addTrack(track, stream);
+  });
+
+  // 4️⃣ Create & send answer
+  const answer = await peerRef.current.createAnswer();
+  await peerRef.current.setLocalDescription(answer);
+
+  socketRef.current.emit("webrtc-answer", { roomId, answer });
+
+  incomingOfferRef.current = null;
+}}
+
+        className="bg-green-600 hover:bg-green-700 px-12 py-3 rounded-full
+                   font-bold text-lg text-white hover:scale-105 transition"
+      >
+        Accept Call
+      </button>
+    </div>
+  )}
+
+  {/* ================= START CALL UI ================= */}
+  {!callActive && !isConnecting && !incomingCall && (
+    <button
+      onClick={() => {
+        setIsConnecting(true);
+        socketRef.current.emit("call-start", { roomId, user });
+        initializePeerConnection(true);
+      }}
+      className="bg-green-600 hover:bg-green-700 px-12 py-4 rounded-full
+                 font-bold text-xl text-white shadow-lg hover:scale-105 transition"
+    >
+      Start Video Call
+    </button>
+  )}
+</div>
 
         {/* CHAT SIDEBAR (MINIMIZED FEEL) */}
-        <div className="flex-1 bg-[#1e293b] border-l border-slate-800 flex flex-col shadow-xl">
-  <div className="p-4 border-b border-slate-700/50 flex items-center justify-between">
-    <span className="font-bold text-slate-400 text-xs uppercase tracking-widest">Live Chat</span>
-    <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
-    </div>
+        <div className="flex-1 bg-white border-l border-gray-200 flex flex-col shadow-sm">
+
+         <div className="p-4 border-b border-gray-200 flex items-center justify-between">
+  <span className="font-bold text-gray-600 text-xs uppercase tracking-widest">
+    Live Chat
+  </span>
+  <span className="h-2 w-2 rounded-full bg-green-500 animate-pulse"></span>
+</div>
           <div className="flex-1 p-4 overflow-y-auto space-y-4">
             {messages.map((m, i) => (
               <div
@@ -433,14 +717,18 @@ export default function RoomPage() {
                   {m.senderName}
                 </span>
                 <div
-                  className={`px-4 py-2 rounded-2xl text-sm max-w-[90%] ${m.senderId === user.id ? "bg-blue-600" : "bg-slate-700 text-white"}`}
-                >
+                  className={`px-4 py-2 rounded-2xl text-sm max-w-[90%] ${
+    m.senderId === user.id
+      ? "bg-green-600 text-white"
+      : "bg-gray-200 text-gray-800"
+  }`}
+>
                   {m.message}
                 </div>
               </div>
             ))}
           </div>
-          <div className="p-4 bg-slate-900 flex gap-2">
+          <div className="p-4 bg-white flex gap-2 border-t border-gray-200">
             <input
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
@@ -453,7 +741,7 @@ export default function RoomPage() {
                 }),
                 setInputMessage(""))
               }
-              className="flex-1 bg-slate-800 border-none rounded-full px-4 text-sm focus:ring-2 focus:ring-blue-500"
+               className="flex-1 bg-gray-100 border border-gray-300 rounded-full px-4 text-sm focus:ring-2 focus:ring-green-500"
               placeholder="Type a message..."
             />
             <button
@@ -465,9 +753,9 @@ export default function RoomPage() {
                 });
                 setInputMessage("");
               }}
-              className="bg-blue-600 p-2 rounded-full w-10 h-10 flex items-center justify-center"
-            >
-              ➤
+              className="bg-green-600 hover:bg-green-700 p-2 rounded-full w-10 h-10 flex items-center justify-center text-white">
+
+              <MdSend size={20} />
             </button>
           </div>
         </div>
@@ -475,5 +763,3 @@ export default function RoomPage() {
     </div>
   );
 }
-
-   

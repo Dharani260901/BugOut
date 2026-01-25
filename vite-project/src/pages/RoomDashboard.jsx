@@ -55,7 +55,9 @@ export default function RoomDashboard() {
         password: joinPassword,
       });
 
-      navigate(`/room/${data.roomId}`);
+     navigate(`/room/${data.roomId}`, {
+  state: { roomName: data.roomName },
+});
     } catch (err) {
       alert(err.message);
     }
