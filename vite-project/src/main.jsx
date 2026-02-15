@@ -10,3 +10,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <App />
   </>
 );
+
+//dark theme
+//swapping video call & chat box
+//file upload
+//fontfabric - pixel
